@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DirLinker</title>
+    <script>
+      // apply the saved theme before first paint (no flash)
+      try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+    </script>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -15,10 +19,17 @@
           <div class="brand-sub">Move folders anywhere — keep them where programs expect them</div>
         </div>
       </div>
-      <div class="head-toggles">
-        <label class="switch"><input type="checkbox" id="opt-sizes" checked /><span></span>Folder sizes</label>
-        <label class="switch"><input type="checkbox" id="opt-follow" checked /><span></span>Show link targets</label>
-        <label class="switch"><input type="checkbox" id="opt-hidden" /><span></span>Hidden items</label>
+      <button class="hbtn saved-btn" id="saved-btn" title="All links created with this app">
+        <span id="saved-ico"></span>Saved links<span class="count" id="saved-count">0</span>
+      </button>
+      <div class="head-right">
+        <label class="switch" title="Calculate the size of every folder in the background"><input type="checkbox" id="opt-sizes" checked /><span></span>Folder sizes</label>
+        <label class="switch" title="Clicking a link on the left shows its real folder on the right"><input type="checkbox" id="opt-follow" checked /><span></span>Follow links</label>
+        <label class="switch" id="opt-hidden-wrap" title="Items with the Windows 'hidden' attribute"><input type="checkbox" id="opt-hidden" /><span></span>Hidden</label>
+        <label class="switch" title="Files and folders whose name starts with a dot"><input type="checkbox" id="opt-dot" /><span></span>.dotfiles</label>
+        <div class="sep"></div>
+        <button class="hbtn icon" id="theme-btn" title="Theme"></button>
+        <button class="hbtn icon" id="help-btn" title="Keyboard & mouse (?)"></button>
       </div>
     </header>
 
@@ -27,7 +38,7 @@
       <div class="rail">
         <button class="link-btn" id="link-btn" disabled title="Create links (Ctrl+Enter)">
           <span class="link-btn-ico" id="link-btn-ico"></span>
-          <span class="link-btn-label">Link</span>
+          <span class="link-btn-label" id="link-btn-label">Link</span>
         </button>
         <div class="rail-hint" id="rail-hint">select on the left</div>
       </div>
@@ -57,12 +68,14 @@
         <span><i class="dot symlink"></i>Symbolic link</span>
         <span><i class="dot hardlink"></i>Hard link</span>
         <span><i class="dot broken"></i>Broken link</span>
+        <span><i class="dot target"></i>Link target</span>
       </div>
       <div class="status-msg" id="status-msg"></div>
-      <div class="keys">Dbl-click / tap: open · Backspace: up · Space: select · Tab: switch pane · Ctrl+Enter: link</div>
+      <button class="keys" id="keys-hint">Press <kbd>?</kbd> for keyboard &amp; mouse help</button>
     </footer>
 
     <div class="modal-backdrop hidden" id="modal"><div class="modal" id="modal-box"></div></div>
+    <div class="ctx hidden" id="ctx"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -33,6 +33,23 @@ export const icons = {
   x: (size = 14) => s(`<path d="M6 6l12 12M18 6L6 18"/>`, size),
   warn: (size = 16) => s(`<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>`, size),
   shield: (size = 14) => s(`<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>`, size),
+  unlink: (size = 26) =>
+    s(`<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4"/><path d="M3 3l18 18"/>`, size),
+  folderPlus: (size = 22) =>
+    s(`<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.4l2 2.2h8.6A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M12 11v6M9 14h6"/>`, size),
+  trash: (size = 16) => s(`<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>`, size),
+  rename: (size = 16) => s(`<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13 7l4 4"/>`, size),
+  info: (size = 16) => s(`<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>`, size),
+  move: (size = 16) => s(`<path d="M4 12h13"/><path d="M13 7l5 5-5 5"/><path d="M21 5v14"/>`, size),
+  open: (size = 16) => s(`<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1"/><path d="M3 7v11a2 2 0 0 0 2 2h13l3-8H7l-4 8"/>`, size),
+  copy: (size = 16) => s(`<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V5a1 1 0 0 1 1-1h11"/>`, size),
+  list: (size = 18) => s(`<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="3"/>`, size),
+  sun: (size = 18) => s(`<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>`, size),
+  moon: (size = 18) => s(`<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>`, size),
+  auto: (size = 18) => s(`<circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>`, size),
+  keyboard: (size = 18) => s(`<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>`, size),
+  starOutline: (size = 14) => s(`<path d="M12 3l2.7 5.9 6.3.7-4.7 4.3 1.3 6.3L12 17l-5.6 3.2 1.3-6.3L3 9.6l6.3-.7z"/>`, size),
+  target: (size = 13) => s(`<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>`, size),
   star: (size = 13) =>
     `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><path d="M12 3l2.7 5.9 6.3.7-4.7 4.3 1.3 6.3L12 17l-5.6 3.2 1.3-6.3L3 9.6l6.3-.7z" fill="currentColor"/></svg>`,
 };

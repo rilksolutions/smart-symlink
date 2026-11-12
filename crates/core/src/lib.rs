@@ -10,6 +10,7 @@ pub mod fsinfo;
 pub mod links;
 pub mod listing;
 pub mod ops;
+pub mod registry;
 pub mod size;
 pub mod util;
 

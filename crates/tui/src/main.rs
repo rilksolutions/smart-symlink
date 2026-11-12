@@ -211,7 +211,7 @@ impl App {
                 Ok(l) => {
                     fs = l.fs.clone();
                     items.push(Item::Up);
-                    items.extend(l.entries.into_iter().filter(|e| show_hidden || !e.hidden).map(Item::Entry));
+                    items.extend(l.entries.into_iter().filter(|e| show_hidden || !(e.hidden || e.dot)).map(Item::Entry));
                     Some(PathBuf::from(l.path))
                 }
                 Err(e) => {

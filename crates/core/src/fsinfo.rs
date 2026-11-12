@@ -279,9 +279,8 @@ pub fn is_root() -> bool {
     }
 }
 
-/// Number of hard links pointing at a file's data.
 #[cfg(windows)]
-pub fn link_count(path: &Path) -> Option<u32> {
+fn handle_info(path: &Path) -> Option<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
@@ -296,13 +295,31 @@ pub fn link_count(path: &Path) -> Option<u32> {
     // SAFETY: zeroed POD struct, valid handle owned by `f`.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     let ok = unsafe { GetFileInformationByHandle(f.as_raw_handle() as _, &mut info) };
-    if ok == 0 { None } else { Some(info.nNumberOfLinks) }
+    if ok == 0 { None } else { Some(info) }
+}
+
+/// Number of hard links pointing at a file's data.
+#[cfg(windows)]
+pub fn link_count(path: &Path) -> Option<u32> {
+    handle_info(path).map(|i| i.nNumberOfLinks)
+}
+
+/// Identity of the underlying file data: (volume, file index). Equal ids = same data (hard links).
+#[cfg(windows)]
+pub fn file_id(path: &Path) -> Option<(u64, u64)> {
+    handle_info(path).map(|i| (i.dwVolumeSerialNumber as u64, ((i.nFileIndexHigh as u64) << 32) | i.nFileIndexLow as u64))
 }
 
 #[cfg(unix)]
 pub fn link_count(path: &Path) -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     std::fs::symlink_metadata(path).ok().map(|m| m.nlink() as u32)
+}
+
+#[cfg(unix)]
+pub fn file_id(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 /// Btrfs subvolumes always have inode number 256.

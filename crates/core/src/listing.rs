@@ -29,7 +29,10 @@ pub struct Entry {
     pub size: Option<u64>,
     /// Milliseconds since Unix epoch
     pub modified: Option<i64>,
+    /// OS "hidden" attribute (Windows); always false on Unix
     pub hidden: bool,
+    /// Name starts with a dot
+    pub dot: bool,
     pub link: Option<LinkInfo>,
 }
 
@@ -102,13 +105,15 @@ pub fn make_entry(p: &Path, md: &Metadata, scan_hardlinks: bool) -> Entry {
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64);
+    let name = file_name_string(p);
     Entry {
-        name: file_name_string(p),
+        dot: name.starts_with('.'),
+        name,
         path: display_path(p),
         is_dir,
         size,
         modified,
-        hidden: is_hidden(p, md),
+        hidden: is_hidden(md),
         link,
     }
 }
@@ -178,17 +183,16 @@ pub fn detect_link(p: &Path, md: &Metadata, scan_hardlinks: bool) -> Option<Link
     None
 }
 
-fn is_hidden(p: &Path, md: &Metadata) -> bool {
+fn is_hidden(md: &Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        let _ = p;
         md.file_attributes() & (0x2 | 0x4) != 0
     }
     #[cfg(not(windows))]
     {
         let _ = md;
-        p.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(false)
+        false
     }
 }
 

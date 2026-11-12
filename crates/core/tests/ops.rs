@@ -9,8 +9,19 @@ use dirlinker_core::util::display_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Keep the saved-links store of tests away from the user's real one.
+fn isolate() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dirlinker-test-config-{}", std::process::id()));
+        // SAFETY: set once, before any test reads it, always to the same value.
+        unsafe { std::env::set_var("DIRLINKER_CONFIG_DIR", dir) };
+    });
+}
+
 fn fresh(base: &Path, name: &str) -> PathBuf {
-    let p = base.join(format!("dirlinker-test-{name}-{}", std::process::id()));
+    isolate();
+    let p =base.join(format!("dirlinker-test-{name}-{}", std::process::id()));
     let _ = ops::remove_tree(&p);
     fs::create_dir_all(&p).unwrap();
     p
@@ -175,5 +186,114 @@ fn existing_target_is_refused() {
     assert!(!r.ok);
     assert!(link_kind_of(&src).is_none());
     assert_tree(&src);
+    ops::remove_tree(&base).unwrap();
+}
+
+fn unlink(link: &Path, mode: ops::UnlinkMode) -> ops::ItemResult {
+    ops::unlink(&[display_path(link)], mode, &|_| {}).into_iter().next().unwrap()
+}
+
+fn saved_links() -> Vec<String> {
+    dirlinker_core::registry::load().links.into_iter().map(|l| l.link).collect()
+}
+
+#[test]
+fn created_links_are_saved_and_unlink_restores_same_volume() {
+    let base = fresh(&std::env::temp_dir(), "unlink-same");
+    let src = base.join("home");
+    let dest = base.join("D");
+    make_tree(&src);
+    fs::create_dir(&dest).unwrap();
+    assert!(run(&src, &dest, move_kind(), Mode::Move).ok);
+    assert!(saved_links().iter().any(|l| l == &display_path(&src)), "link not saved");
+
+    let r = unlink(&src, ops::UnlinkMode::Restore);
+    assert!(r.ok, "{}", r.message);
+    assert!(link_kind_of(&src).is_none(), "should be a real folder again");
+    assert_tree(&src);
+    assert!(!dest.join("home").exists());
+    assert!(!saved_links().iter().any(|l| l == &display_path(&src)), "link not forgotten");
+    ops::remove_tree(&base).unwrap();
+}
+
+#[test]
+fn unlink_restores_cross_volume() {
+    let a = fresh(&std::env::temp_dir(), "unlink-xa");
+    let b = fresh(Path::new(env!("CARGO_TARGET_TMPDIR")), "unlink-xb");
+    let src = a.join("home");
+    make_tree(&src);
+    assert!(run(&src, &b, move_kind(), Mode::Move).ok);
+
+    let r = unlink(&src, ops::UnlinkMode::Restore);
+    assert!(r.ok, "{}", r.message);
+    assert!(link_kind_of(&src).is_none());
+    assert_tree(&src);
+    assert!(!b.join("home").exists());
+    assert_eq!(fs::read_dir(&a).unwrap().count(), 1, "leftover temp folders");
+    ops::remove_tree(&a).unwrap();
+    ops::remove_tree(&b).unwrap();
+}
+
+#[test]
+fn unlink_remove_only_keeps_data_at_target() {
+    let base = fresh(&std::env::temp_dir(), "unlink-remove");
+    let src = base.join("home");
+    let dest = base.join("D");
+    make_tree(&src);
+    fs::create_dir(&dest).unwrap();
+    assert!(run(&src, &dest, move_kind(), Mode::Move).ok);
+    let r = unlink(&src, ops::UnlinkMode::Remove);
+    assert!(r.ok, "{}", r.message);
+    assert!(!src.exists());
+    assert_tree(&dest.join("home"));
+    ops::remove_tree(&base).unwrap();
+}
+
+/// If the data can't be moved back (a file is open), the removed link must be re-created.
+#[cfg(windows)]
+#[test]
+fn failed_unlink_restores_the_link() {
+    let base = fresh(&std::env::temp_dir(), "unlink-fail");
+    let src = base.join("home");
+    let dest = base.join("D");
+    make_tree(&src);
+    fs::create_dir(&dest).unwrap();
+    assert!(run(&src, &dest, LinkKind::Junction, Mode::Move).ok);
+
+    // hold a file open without delete sharing -> renaming the folder fails
+    use std::os::windows::fs::OpenOptionsExt;
+    let lock = fs::OpenOptions::new().read(true).share_mode(1).open(dest.join("home/a.txt")).unwrap();
+    let r = unlink(&src, ops::UnlinkMode::Restore);
+    drop(lock);
+    assert!(!r.ok, "unlink should fail while a file is open");
+    assert!(r.message.contains("link was restored"), "{}", r.message);
+    assert_eq!(link_kind_of(&src), Some(LinkKind::Junction), "link must be back");
+    assert_tree(&src);
+    ops::remove_tree(&base).unwrap();
+}
+
+#[test]
+fn hardlink_unlink_and_file_ops() {
+    let base = fresh(&std::env::temp_dir(), "fileops");
+    let f = base.join("file.txt");
+    fs::write(&f, "data").unwrap();
+    let dest = base.join("other");
+    fs::create_dir(&dest).unwrap();
+    assert!(run(&f, &dest, LinkKind::Hardlink, Mode::Link).ok);
+    let r = unlink(&dest.join("file.txt"), ops::UnlinkMode::Remove);
+    assert!(r.ok, "{}", r.message);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "data");
+
+    let made = ops::create_dir(&display_path(&base), "New folder").unwrap();
+    assert!(Path::new(&made).is_dir());
+    assert!(ops::create_dir(&display_path(&base), "bad/name").is_err());
+    let renamed = ops::rename(&made, "Renamed").unwrap();
+    assert!(Path::new(&renamed).is_dir());
+    let moved = ops::move_items(&[renamed.clone()], &display_path(&dest), &|_| {});
+    assert!(moved[0].ok, "{}", moved[0].message);
+    assert!(dest.join("Renamed").is_dir());
+    let del = ops::delete(&[display_path(&dest.join("Renamed"))], true, &|_| {});
+    assert!(del[0].ok, "{}", del[0].message);
+    assert!(!dest.join("Renamed").exists());
     ops::remove_tree(&base).unwrap();
 }

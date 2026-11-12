@@ -28,7 +28,25 @@ export interface Entry {
   size: number | null;
   modified: number | null;
   hidden: boolean;
+  dot: boolean;
   link: LinkInfo | null;
+}
+
+export type UnlinkMode = "restore" | "remove";
+export type LinkStatus = "ok" | "broken" | "missing" | "changed";
+
+export interface SavedLink {
+  link: string;
+  target: string;
+  kind: LinkKind;
+  created: number;
+  moved: boolean;
+}
+
+export interface SavedLinkView {
+  saved: SavedLink;
+  status: LinkStatus;
+  entry: Entry | null;
 }
 
 export interface Crumb {
@@ -109,6 +127,18 @@ export const api = {
   execute: (req: { sources: string[]; dest: string; kind: LinkKind; mode: Mode }) =>
     invoke<ItemResult[]>("execute", { req }),
   reveal: (path: string) => invoke<void>("reveal", { path }),
+  entryInfo: (path: string) => invoke<Entry>("entry_info", { path }),
+  unlink: (links: string[], mode: UnlinkMode) => invoke<ItemResult[]>("unlink", { links, mode }),
+  moveItems: (sources: string[], dest: string) => invoke<ItemResult[]>("move_items", { sources, dest }),
+  deleteItems: (paths: string[], permanent: boolean) => invoke<ItemResult[]>("delete_items", { paths, permanent }),
+  createDir: (parent: string, name: string) => invoke<string>("create_dir", { parent, name }),
+  renameItem: (path: string, name: string) => invoke<string>("rename_item", { path, name }),
+  nativeProperties: (path: string) => invoke<boolean>("native_properties", { path }),
+  savedLinks: () => invoke<SavedLinkView[]>("saved_links"),
+  forgetLink: (link: string) => invoke<void>("forget_link", { link }),
+  favorites: () => invoke<string[]>("favorites"),
+  setFavorite: (path: string, on: boolean) => invoke<string[]>("set_favorite", { path, on }),
+  linksInto: (path: string) => invoke<SavedLink[]>("links_into", { path }),
   onProgress: (cb: (p: Progress) => void): Promise<UnlistenFn> =>
     listen<Progress>("op-progress", (e) => cb(e.payload)),
 };

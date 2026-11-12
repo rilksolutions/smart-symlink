@@ -6,10 +6,12 @@
 //! 4. create the link at the original path
 //! 5. delete the renamed original
 //!
-//! Every step before 5 rolls back on failure.
+//! Every step before 5 rolls back on failure. Unlinking is the same dance in reverse,
+//! and re-creates the link if moving the data back fails.
 
 use crate::links::{LinkKind, Mode};
-use crate::listing::is_dir_like;
+use crate::listing::{is_dir_like, is_junction};
+use crate::registry::{self, SavedLink};
 use crate::size;
 use crate::util::{clean_path, display_path, fmt_bytes};
 use serde::{Deserialize, Serialize};
@@ -41,55 +43,74 @@ pub struct Progress {
     pub item_index: usize,
     pub item_count: usize,
     pub item: String,
-    /// scanning | copying | verifying | moving | linking | cloning | cleaning
+    /// scanning | copying | verifying | moving | linking | unlinking | cloning | cleaning | deleting
     pub phase: String,
     pub file: Option<String>,
     pub bytes_done: u64,
     pub bytes_total: u64,
 }
 
-pub fn execute(req: &Request, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
-    let dest = crate::util::normalize_input(&req.dest);
-    let n = req.sources.len();
-    let mut out = Vec::with_capacity(n);
-    for (i, s) in req.sources.iter().enumerate() {
-        let src = crate::util::normalize_input(s);
-        let Some(name) = src.file_name() else {
-            out.push(ItemResult {
-                source: s.clone(),
-                target: String::new(),
-                ok: false,
-                message: "Drive roots can't be linked.".into(),
-            });
-            continue;
-        };
-        let target = dest.join(name);
-        let item = display_path(&src);
-        let mut report = |phase: &str, file: Option<&Path>, done: u64, total: u64| {
-            cb(&Progress {
-                item_index: i,
-                item_count: n,
-                item: item.clone(),
-                phase: phase.into(),
-                file: file.map(display_path),
-                bytes_done: done,
-                bytes_total: total,
-            })
-        };
-        let r = run_item(&src, &target, req.kind, req.mode, &mut report);
-        size::invalidate(&src);
-        size::invalidate(&target);
-        out.push(ItemResult {
-            source: display_path(&src),
-            target: display_path(&target),
-            ok: r.is_ok(),
-            message: r.unwrap_or_else(|e| e),
-        });
-    }
-    out
+type Report<'a> = dyn FnMut(&str, Option<&Path>, u64, u64) + 'a;
+
+/// Runs `f` for each item with a progress reporter bound to that item.
+fn for_each_item(
+    items: &[String],
+    cb: &dyn Fn(&Progress),
+    mut f: impl FnMut(&Path, &mut Report) -> (String, Result<String, String>),
+) -> Vec<ItemResult> {
+    let n = items.len();
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let src = crate::util::normalize_input(s);
+            let item = display_path(&src);
+            let mut report = |phase: &str, file: Option<&Path>, done: u64, total: u64| {
+                cb(&Progress {
+                    item_index: i,
+                    item_count: n,
+                    item: item.clone(),
+                    phase: phase.into(),
+                    file: file.map(display_path),
+                    bytes_done: done,
+                    bytes_total: total,
+                })
+            };
+            let (target, r) = f(&src, &mut report);
+            size::invalidate(&src);
+            if !target.is_empty() {
+                size::invalidate(Path::new(&target));
+            }
+            ItemResult { source: display_path(&src), target, ok: r.is_ok(), message: r.unwrap_or_else(|e| e) }
+        })
+        .collect()
 }
 
-type Report<'a> = dyn FnMut(&str, Option<&Path>, u64, u64) + 'a;
+// ------------------------------------------------------------------ link
+
+pub fn execute(req: &Request, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    let dest = crate::util::normalize_input(&req.dest);
+    for_each_item(&req.sources, cb, |src, rep| {
+        let Some(name) = src.file_name() else {
+            return (String::new(), Err("Drive roots can't be linked.".into()));
+        };
+        let target = dest.join(name);
+        let r = run_item(src, &target, req.kind, req.mode, rep);
+        if r.is_ok() && !matches!(req.kind, LinkKind::Clone | LinkKind::Snapshot) {
+            let moved = req.mode == Mode::Move && !crate::links::keeps_source(req.kind);
+            // moved: the link sits where the data used to be; otherwise the new link is in the destination
+            let (link, data) = if moved { (src, target.as_path()) } else { (target.as_path(), src) };
+            registry::add_link(SavedLink {
+                link: display_path(link),
+                target: display_path(data),
+                kind: req.kind,
+                created: registry::now_ms(),
+                moved,
+            });
+        }
+        (display_path(&target), r)
+    })
+}
 
 fn run_item(src: &Path, target: &Path, kind: LinkKind, mode: Mode, rep: &mut Report) -> Result<String, String> {
     if fs::symlink_metadata(target).is_ok() {
@@ -143,26 +164,17 @@ fn run_item(src: &Path, target: &Path, kind: LinkKind, mode: Mode, rep: &mut Rep
     }
 }
 
-fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut Report) -> Result<String, String> {
-    let same = match (crate::fsinfo::vol_info(src), crate::fsinfo::vol_info(target.parent().unwrap_or(target))) {
+fn same_volume(a: &Path, b: &Path) -> bool {
+    match (crate::fsinfo::vol_info(a), crate::fsinfo::vol_info(b)) {
         (Some(a), Some(b)) => a.same_volume(&b),
         _ => false,
-    };
-
-    if same {
-        rep("moving", Some(src), 0, 0);
-        fs::rename(src, target).map_err(|e| in_use_msg("Could not move", &e))?;
-        rep("linking", Some(src), 0, 0);
-        if let Err(e) = create_link(kind, src, target, is_dir) {
-            return Err(match fs::rename(target, src) {
-                Ok(_) => format!("{e} The original was restored."),
-                Err(_) => format!("{e} WARNING: the data is now at {}.", display_path(target)),
-            });
-        }
-        return Ok(format!("Moved and linked{}", bind_hint(kind, target, src)));
     }
+}
 
-    // Different volumes: copy, verify, swap.
+/// Cross-volume move, phase 1: copy `src` to `target`, verify, then rename `src` aside.
+/// On success returns the aside path (delete it to finish) and the byte count.
+/// On failure nothing has changed.
+fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(PathBuf, u64), String> {
     rep("scanning", Some(src), 0, 0);
     let before = size::measure(src);
     let total = before.bytes;
@@ -183,12 +195,29 @@ fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &
             fmt_bytes(after.bytes)
         ));
     }
-
-    let aside = aside_path(src);
+    let aside = sibling(src, "dirlinker-old");
     if let Err(e) = fs::rename(src, &aside) {
         let _ = remove_tree(target);
-        return Err(in_use_msg("The original is in use and can't be replaced", &e) + " Copy removed, nothing changed.");
+        return Err(in_use_msg(&format!("{} is in use and can't be moved", display_path(src)), &e) + " Copy removed, nothing changed.");
     }
+    Ok((aside, total))
+}
+
+fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut Report) -> Result<String, String> {
+    if same_volume(src, target.parent().unwrap_or(target)) {
+        rep("moving", Some(src), 0, 0);
+        fs::rename(src, target).map_err(|e| in_use_msg("Could not move", &e))?;
+        rep("linking", Some(src), 0, 0);
+        if let Err(e) = create_link(kind, src, target, is_dir) {
+            return Err(match fs::rename(target, src) {
+                Ok(_) => format!("{e} The original was restored."),
+                Err(_) => format!("{e} WARNING: the data is now at {}.", display_path(target)),
+            });
+        }
+        return Ok(format!("Moved and linked{}", bind_hint(kind, target, src)));
+    }
+
+    let (aside, total) = copy_verify_aside(src, target, rep)?;
     rep("linking", Some(src), total, total);
     if let Err(e) = create_link(kind, src, target, is_dir) {
         let restored = fs::rename(&aside, src).is_ok();
@@ -209,6 +238,253 @@ fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &
     }
 }
 
+// ------------------------------------------------------------------ unlink
+
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum UnlinkMode {
+    /// Move the data back to the link's place and remove the link
+    Restore,
+    /// Only remove the link; the data stays where it is
+    Remove,
+}
+
+/// Where a symlink / junction points (absolute, without verbatim prefixes).
+pub fn link_target(link: &Path) -> Option<PathBuf> {
+    let t = clean_path(&fs::read_link(link).ok()?);
+    Some(if t.is_relative() { link.parent().map(|p| p.join(&t)).unwrap_or(t) } else { t })
+}
+
+pub fn unlink(links: &[String], mode: UnlinkMode, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    for_each_item(links, cb, |link, rep| {
+        let r = unlink_one(link, mode, rep);
+        match r {
+            Ok((target, msg)) => {
+                let _ = registry::forget_link(&display_path(link));
+                (target, Ok(msg))
+            }
+            Err(e) => (String::new(), Err(e)),
+        }
+    })
+}
+
+fn unlink_one(link: &Path, mode: UnlinkMode, rep: &mut Report) -> Result<(String, String), String> {
+    let md = fs::symlink_metadata(link).map_err(|e| format!("Can't read {}: {e}", display_path(link)))?;
+
+    if md.file_type().is_symlink() {
+        let kind = if is_junction(link) { LinkKind::Junction } else { LinkKind::Symlink };
+        let is_dir = is_dir_like(link, &md);
+        let target = link_target(link).ok_or("Can't read where the link points.")?;
+        let tshow = display_path(&target);
+        let tmd = fs::symlink_metadata(&target)
+            .map_err(|_| format!("The link points to {tshow}, which no longer exists — nothing to restore. Use Delete to remove the broken link."))?;
+        if tmd.file_type().is_symlink() {
+            return Err(format!("{tshow} is itself a link — unlink that one first."));
+        }
+        let msg = match mode {
+            UnlinkMode::Remove => {
+                rep("unlinking", Some(link), 0, 0);
+                remove_link(link).map_err(|e| format!("Could not remove the link: {e}"))?;
+                format!("Link removed. The data stays at {tshow}.")
+            }
+            UnlinkMode::Restore => restore(link, &target, kind, is_dir, rep)?,
+        };
+        return Ok((tshow, msg));
+    }
+
+    if md.is_file() {
+        let saved = registry::load()
+            .links
+            .into_iter()
+            .find(|l| l.kind == LinkKind::Hardlink && registry::same_path(&l.link, &display_path(link)));
+        let Some(s) = saved else {
+            return Err("This is a regular file, not a link.".into());
+        };
+        let partner = Path::new(&s.target);
+        if crate::fsinfo::file_id(link).is_none() || crate::fsinfo::file_id(link) != crate::fsinfo::file_id(partner) {
+            return Err(format!("{} no longer shares its data with {} — refusing to remove it.", display_path(link), s.target));
+        }
+        rep("unlinking", Some(link), 0, 0);
+        fs::remove_file(link).map_err(|e| format!("Could not remove the hard link: {e}"))?;
+        return Ok((s.target.clone(), format!("Hard link removed. The data stays at {}.", s.target)));
+    }
+
+    Err("This is a regular folder, not a link.".into())
+}
+
+/// Move the data from `target` back to `link`'s place. If anything fails after the link
+/// was removed, the link is re-created so nothing is lost or left dangling.
+fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut Report) -> Result<String, String> {
+    if same_volume(target, link.parent().unwrap_or(link)) {
+        rep("unlinking", Some(link), 0, 0);
+        remove_link(link).map_err(|e| format!("Could not remove the link: {e}"))?;
+        rep("moving", Some(target), 0, 0);
+        if let Err(e) = fs::rename(target, link) {
+            return Err(match create_link(kind, link, target, is_dir) {
+                Ok(_) => in_use_msg("Could not move the data back", &e) + " The link was restored.",
+                Err(e2) => format!(
+                    "Could not move the data back ({e}) and the link could not be re-created ({e2}). The data is safe at {}.",
+                    display_path(target)
+                ),
+            });
+        }
+        return Ok("Data moved back and link removed.".into());
+    }
+
+    let tmp = sibling(link, "dirlinker-restore");
+    let (aside, total) = copy_verify_aside(target, &tmp, rep)?;
+    rep("unlinking", Some(link), total, total);
+    if let Err(e) = remove_link(link) {
+        let _ = fs::rename(&aside, target);
+        let _ = remove_tree(&tmp);
+        return Err(format!("Could not remove the link: {e}. Nothing was changed."));
+    }
+    if let Err(e) = fs::rename(&tmp, link) {
+        let back = fs::rename(&aside, target).is_ok();
+        let relinked = back && create_link(kind, link, target, is_dir).is_ok();
+        let _ = remove_tree(&tmp);
+        return Err(if relinked {
+            format!("Could not put the data back in place ({e}). The link was restored, nothing changed.")
+        } else {
+            format!("Could not put the data back in place ({e}). WARNING: data is at {}.", display_path(if back { target } else { &aside }))
+        });
+    }
+    rep("cleaning", Some(&aside), total, total);
+    match remove_tree(&aside) {
+        Ok(_) => Ok(format!("Moved {} back and removed the link.", fmt_bytes(total))),
+        Err(e) => Ok(format!(
+            "Data moved back and link removed, but the old copy at {} could not be fully deleted ({e}).",
+            display_path(&aside)
+        )),
+    }
+}
+
+// ------------------------------------------------------------------ plain file operations
+
+/// Move items into `dest` (no links). Uses the same safe copy/verify path between drives.
+pub fn move_items(sources: &[String], dest: &str, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    let dest = crate::util::normalize_input(dest);
+    for_each_item(sources, cb, |src, rep| {
+        let Some(name) = src.file_name() else {
+            return (String::new(), Err("Drive roots can't be moved.".into()));
+        };
+        let target = dest.join(name);
+        let tshow = display_path(&target);
+        if fs::symlink_metadata(&target).is_ok() {
+            return (tshow.clone(), Err(format!("{tshow} already exists.")));
+        }
+        if dest.starts_with(src) {
+            return (tshow, Err("Can't move a folder into itself.".into()));
+        }
+        let r = if same_volume(src, &dest) {
+            rep("moving", Some(src), 0, 0);
+            fs::rename(src, &target).map(|_| "Moved.".to_string()).map_err(|e| in_use_msg("Could not move", &e))
+        } else {
+            copy_verify_aside(src, &target, rep).map(|(aside, total)| {
+                rep("cleaning", Some(&aside), total, total);
+                match remove_tree(&aside) {
+                    Ok(_) => format!("Moved {}.", fmt_bytes(total)),
+                    Err(e) => format!("Moved, but the old copy at {} could not be fully deleted ({e}).", display_path(&aside)),
+                }
+            })
+        };
+        if r.is_ok() {
+            registry::path_moved(&display_path(src), &tshow);
+        }
+        (tshow, r)
+    })
+}
+
+fn check_name(name: &str) -> Result<(), String> {
+    let bad: &[char] = if cfg!(windows) { &['\\', '/', ':', '*', '?', '"', '<', '>', '|'] } else { &['/'] };
+    if name.trim().is_empty() || name == "." || name == ".." {
+        return Err("Please enter a name.".into());
+    }
+    if let Some(c) = name.chars().find(|c| bad.contains(c) || c.is_control()) {
+        return Err(format!("A name can't contain '{c}'."));
+    }
+    if cfg!(windows) && (name.ends_with(' ') || name.ends_with('.')) {
+        return Err("On Windows a name can't end with a space or a dot.".into());
+    }
+    Ok(())
+}
+
+pub fn create_dir(parent: &str, name: &str) -> Result<String, String> {
+    check_name(name)?;
+    let p = crate::util::normalize_input(parent).join(name);
+    fs::create_dir(&p).map_err(|e| match e.kind() {
+        io::ErrorKind::AlreadyExists => format!("'{name}' already exists."),
+        _ => format!("Could not create folder: {e}"),
+    })?;
+    Ok(display_path(&p))
+}
+
+pub fn rename(path: &str, new_name: &str) -> Result<String, String> {
+    check_name(new_name)?;
+    let old = crate::util::normalize_input(path);
+    let new = old.parent().ok_or("Drives can't be renamed here.")?.join(new_name);
+    let case_only = registry::same_path(&display_path(&old), &display_path(&new));
+    if !case_only && fs::symlink_metadata(&new).is_ok() {
+        return Err(format!("'{new_name}' already exists."));
+    }
+    fs::rename(&old, &new).map_err(|e| in_use_msg("Could not rename", &e))?;
+    registry::path_moved(&display_path(&old), &display_path(&new));
+    size::invalidate(&old);
+    Ok(display_path(&new))
+}
+
+/// Delete items. Links are always removed directly (never their target); everything else goes
+/// to the recycle bin / trash unless `permanent`.
+pub fn delete(paths: &[String], permanent: bool, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    for_each_item(paths, cb, |p, rep| {
+        rep("deleting", Some(p), 0, 0);
+        let r = match fs::symlink_metadata(p) {
+            Err(e) => Err(format!("Can't read: {e}")),
+            Ok(md) if md.file_type().is_symlink() => remove_link(p)
+                .map(|_| {
+                    let _ = registry::forget_link(&display_path(p));
+                    "Link removed (its target was not touched).".to_string()
+                })
+                .map_err(|e| e.to_string()),
+            Ok(_) if permanent => remove_tree(p).map(|_| "Deleted permanently.".to_string()).map_err(|e| in_use_msg("Could not delete", &e)),
+            Ok(_) => trash::delete(p).map(|_| "Moved to the recycle bin.".to_string()).map_err(|e| {
+                format!("Could not move to the recycle bin ({e}). Try again with “Delete permanently”.")
+            }),
+        };
+        (String::new(), r)
+    })
+}
+
+/// Open the operating system's own properties window. Returns false if the OS has none
+/// (then the UI shows its own).
+pub fn native_properties(path: &str) -> Result<bool, String> {
+    let p = crate::util::normalize_input(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::{SHOP_FILEPATH, SHObjectProperties};
+        let w: Vec<u16> = p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        // SAFETY: null-terminated wide string; must be called on a thread with a message loop (the UI thread).
+        let ok = unsafe { SHObjectProperties(std::ptr::null_mut(), SHOP_FILEPATH as u32, w.as_ptr(), std::ptr::null()) };
+        Ok(ok != 0)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "tell application \"Finder\"\nactivate\nopen information window of (POSIX file \"{}\" as alias)\nend tell",
+            display_path(&p).replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        std::process::Command::new("osascript").arg("-e").arg(script).spawn().map(|_| true).map_err(|e| e.to_string())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = p;
+        Ok(false)
+    }
+}
+
+// ------------------------------------------------------------------ helpers
+
 fn in_use_msg(prefix: &str, e: &io::Error) -> String {
     match e.kind() {
         io::ErrorKind::PermissionDenied => format!("{prefix}: access denied or a program is using it. Close programs using it and try again."),
@@ -228,12 +504,13 @@ fn bind_hint(kind: LinkKind, data: &Path, mountpoint: &Path) -> String {
     }
 }
 
-fn aside_path(src: &Path) -> PathBuf {
-    let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+/// `<path>.<suffix>`, numbered if that already exists.
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let mut i = 0;
     loop {
-        let candidate = if i == 0 { format!("{name}.dirlinker-old") } else { format!("{name}.dirlinker-old{i}") };
-        let p = src.with_file_name(candidate);
+        let candidate = if i == 0 { format!("{name}.{suffix}") } else { format!("{name}.{suffix}{i}") };
+        let p = path.with_file_name(candidate);
         if fs::symlink_metadata(&p).is_err() {
             return p;
         }
@@ -305,7 +582,7 @@ fn copy_link(src: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if crate::listing::is_junction(src) {
+        if is_junction(src) {
             return junction::create(&t, dst);
         }
         if fs::symlink_metadata(src)?.file_attributes() & 0x10 != 0 {
