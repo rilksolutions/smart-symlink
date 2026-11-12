@@ -86,28 +86,24 @@ fn walk(p: &Path, tok: &Token, depth: u32, use_cache: bool) -> Option<SizeInfo> 
             return Some(c);
         }
     }
-    let rd = match fs::read_dir(p) {
-        Ok(r) => r,
+    // quiet listing: measuring must not change any folder's "accessed" date
+    let entries = match crate::fsx::list(p) {
+        Ok(v) => v,
         Err(_) => return Some(SizeInfo { errors: 1, ..Default::default() }),
     };
-    let entries: Vec<fs::DirEntry> = rd.filter_map(Result::ok).collect();
     let total = entries
         .par_iter()
         .map(|e| -> Option<SizeInfo> {
-            let Ok(ft) = e.file_type() else {
-                return Some(SizeInfo { errors: 1, ..Default::default() });
-            };
-            if ft.is_symlink() {
+            if e.is_link {
                 // never follow links / junctions: their data lives elsewhere
                 Some(SizeInfo::default())
-            } else if ft.is_dir() {
-                walk(&e.path(), tok, depth + 1, use_cache).map(|mut s| {
+            } else if e.is_dir {
+                walk(&e.path, tok, depth + 1, use_cache).map(|mut s| {
                     s.dirs += 1;
                     s
                 })
             } else {
-                let len = e.metadata().map(|m| m.len()).unwrap_or(0);
-                Some(SizeInfo { bytes: len, files: 1, ..Default::default() })
+                Some(SizeInfo { bytes: e.len, files: 1, ..Default::default() })
             }
         })
         .try_reduce(SizeInfo::default, |a, b| Some(a + b))?;

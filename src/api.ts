@@ -124,12 +124,14 @@ export const api = {
   invalidateSizes: (path: string | null) => invoke<void>("invalidate_sizes", { path }),
   linkOptions: (sources: string[], dest: string, mode: Mode) =>
     invoke<Analysis>("link_options", { sources, dest, mode }),
-  execute: (req: { sources: string[]; dest: string; kind: LinkKind; mode: Mode }) =>
+  execute: (req: { sources: string[]; dest: string; kind: LinkKind; mode: Mode; verify: boolean }) =>
     invoke<ItemResult[]>("execute", { req }),
   reveal: (path: string) => invoke<void>("reveal", { path }),
   entryInfo: (path: string) => invoke<Entry>("entry_info", { path }),
-  unlink: (links: string[], mode: UnlinkMode) => invoke<ItemResult[]>("unlink", { links, mode }),
-  moveItems: (sources: string[], dest: string) => invoke<ItemResult[]>("move_items", { sources, dest }),
+  unlink: (links: string[], mode: UnlinkMode, verify: boolean) => invoke<ItemResult[]>("unlink", { links, mode, verify }),
+  moveItems: (sources: string[], dest: string, verify: boolean) => invoke<ItemResult[]>("move_items", { sources, dest, verify }),
+  restartElevated: () => invoke<void>("restart_elevated"),
+  privilegesNote: () => invoke<string | null>("privileges_note"),
   deleteItems: (paths: string[], permanent: boolean) => invoke<ItemResult[]>("delete_items", { paths, permanent }),
   createDir: (parent: string, name: string) => invoke<string>("create_dir", { parent, name }),
   renameItem: (path: string, name: string) => invoke<string>("rename_item", { path, name }),

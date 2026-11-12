@@ -26,6 +26,9 @@ pub struct Request {
     pub dest: String,
     pub kind: LinkKind,
     pub mode: Mode,
+    /// Compare every copied file byte by byte (slower)
+    #[serde(default)]
+    pub verify: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -90,7 +93,7 @@ fn for_each_item(
 
 pub fn execute(req: &Request, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
     let dest = crate::util::normalize_input(&req.dest);
-    for_each_item(&req.sources, cb, |src, rep| {
+    with_verify(req.verify, || for_each_item(&req.sources, cb, |src, rep| {
         let Some(name) = src.file_name() else {
             return (String::new(), Err("Drive roots can't be linked.".into()));
         };
@@ -109,7 +112,7 @@ pub fn execute(req: &Request, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
             });
         }
         (display_path(&target), r)
-    })
+    }))
 }
 
 fn run_item(src: &Path, target: &Path, kind: LinkKind, mode: Mode, rep: &mut Report) -> Result<String, String> {
@@ -165,6 +168,10 @@ fn run_item(src: &Path, target: &Path, kind: LinkKind, mode: Mode, rep: &mut Rep
 }
 
 fn same_volume(a: &Path, b: &Path) -> bool {
+    // test hook: force the copy path even when everything is on one drive
+    if std::env::var_os("DIRLINKER_FORCE_COPY").is_some() {
+        return false;
+    }
     match (crate::fsinfo::vol_info(a), crate::fsinfo::vol_info(b)) {
         (Some(a), Some(b)) => a.same_volume(&b),
         _ => false,
@@ -174,17 +181,27 @@ fn same_volume(a: &Path, b: &Path) -> bool {
 /// Cross-volume move, phase 1: copy `src` to `target`, verify, then rename `src` aside.
 /// On success returns the aside path (delete it to finish) and the byte count.
 /// On failure nothing has changed.
-fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(PathBuf, u64), String> {
+type Applied = Vec<(PathBuf, crate::meta::Snapshot)>;
+
+fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(PathBuf, u64, Applied), String> {
     rep("scanning", Some(src), 0, 0);
-    let before = size::measure(src);
+    // record every item's metadata before anything is read (reading can change "accessed" dates)
+    let mut snaps = std::collections::HashMap::new();
+    let mut before = size::SizeInfo::default();
+    if let Err(e) = snapshot_tree(src, &mut snaps, &mut before) {
+        return Err(format!("{e}. Nothing was changed."));
+    }
     let total = before.bytes;
-    let mut done = 0u64;
-    if let Err(e) = copy_tree(src, target, &mut done, &mut |f, d| rep("copying", Some(f), d, total)) {
+    let (mut done, mut files) = (0u64, 0u64);
+    let mut applied = Applied::new();
+    if let Err(e) = copy_tree(src, target, snaps, &mut done, &mut files, &mut applied, &mut |f, d| rep("copying", Some(f), d, total)) {
         let _ = remove_tree(target);
         return Err(format!("Copy failed: {e}. Nothing was changed."));
     }
+    // every item was already compared one by one; this catches files that changed size while copying.
+    // (No re-listing of the copy: listing a folder can change its "accessed" date.)
     rep("verifying", None, total, total);
-    let after = size::measure(target);
+    let after = size::SizeInfo { bytes: done, files, ..Default::default() };
     if after.bytes != before.bytes || after.files != before.files {
         let _ = remove_tree(target);
         return Err(format!(
@@ -195,12 +212,68 @@ fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(Pat
             fmt_bytes(after.bytes)
         ));
     }
+    // other programs (typically an antivirus scanning the new files) may have touched the copies
+    // after their metadata was set: re-check everything and re-apply what changed
+    if let Err(e) = settle(&applied) {
+        let _ = remove_tree(target);
+        return Err(format!("{e}. Copy removed, nothing changed."));
+    }
     let aside = sibling(src, "dirlinker-old");
     if let Err(e) = fs::rename(src, &aside) {
         let _ = remove_tree(target);
         return Err(in_use_msg(&format!("{} is in use and can't be moved", display_path(src)), &e) + " Copy removed, nothing changed.");
     }
-    Ok((aside, total))
+    Ok((aside, total, applied))
+}
+
+/// Re-check every copied item and re-apply metadata that another program changed after it was set.
+///
+/// Everything must end up identical, with one exception: the "last accessed" date. Any program that
+/// reads a file or lists a folder (indexers, sync/backup tools, antivirus) updates it, and some keep
+/// doing so whenever the item changes. DirLinker restores it; if another program keeps changing it,
+/// the result carries a note instead of failing. Retries for ~3 s.
+///
+/// Ok(None): all identical. Ok(Some(note)): only "accessed" dates were changed by another program.
+fn settle(applied: &[(PathBuf, crate::meta::Snapshot)]) -> Result<Option<String>, String> {
+    const ROUNDS: usize = 10;
+    for round in 0..ROUNDS {
+        if round > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        let bad: Vec<_> = applied.iter().filter_map(|(p, s)| crate::meta::verify(p, s).err().map(|e| (p, s, e))).collect();
+        if bad.is_empty() {
+            return Ok(None);
+        }
+        let only_accessed = bad.iter().all(|(_, _, e)| e == "accessed date");
+        if round == ROUNDS - 1 {
+            if only_accessed {
+                return Ok(Some(format!(
+                    " Note: another program on this computer (e.g. a search indexer, sync, backup or antivirus tool) keeps reading \
+                     {} of the copied items, which updates their “last accessed” date. DirLinker restored the original dates, but \
+                     that program changed them again. Everything else is exactly as before.",
+                    bad.len()
+                )));
+            }
+            let (p, _, e) = &bad[0];
+            return Err(format!("{}: {e} keeps being changed by another program after copying", display_path(p)));
+        }
+        for (p, s, e) in &bad {
+            let r = if e == "accessed date" { crate::meta::reapply_dates(p, s) } else { crate::meta::apply_and_verify(p, s) };
+            if let Err(e) = r {
+                return Err(e);
+            }
+        }
+    }
+    unreachable!()
+}
+
+/// Final re-check after the swap; returns a note for the result message if something is off.
+fn late_check(applied: &[(PathBuf, crate::meta::Snapshot)]) -> String {
+    match settle(applied) {
+        Ok(None) => String::new(),
+        Ok(Some(note)) => note,
+        Err(e) => format!(" Warning: {e}."),
+    }
 }
 
 fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut Report) -> Result<String, String> {
@@ -217,7 +290,7 @@ fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &
         return Ok(format!("Moved and linked{}", bind_hint(kind, target, src)));
     }
 
-    let (aside, total) = copy_verify_aside(src, target, rep)?;
+    let (aside, total, applied) = copy_verify_aside(src, target, rep)?;
     rep("linking", Some(src), total, total);
     if let Err(e) = create_link(kind, src, target, is_dir) {
         let restored = fs::rename(&aside, src).is_ok();
@@ -229,8 +302,9 @@ fn move_and_link(src: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &
         });
     }
     rep("cleaning", Some(&aside), total, total);
+    let note = late_check(&applied);
     match remove_tree(&aside) {
-        Ok(_) => Ok(format!("Moved {} and linked{}", fmt_bytes(total), bind_hint(kind, target, src))),
+        Ok(_) => Ok(format!("Moved {} and linked{}{note}", fmt_bytes(total), bind_hint(kind, target, src))),
         Err(e) => Ok(format!(
             "Moved and linked, but the old copy at {} could not be fully deleted ({e}). You can delete it manually.",
             display_path(&aside)
@@ -255,8 +329,8 @@ pub fn link_target(link: &Path) -> Option<PathBuf> {
     Some(if t.is_relative() { link.parent().map(|p| p.join(&t)).unwrap_or(t) } else { t })
 }
 
-pub fn unlink(links: &[String], mode: UnlinkMode, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
-    for_each_item(links, cb, |link, rep| {
+pub fn unlink(links: &[String], mode: UnlinkMode, verify: bool, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    with_verify(verify, || for_each_item(links, cb, |link, rep| {
         let r = unlink_one(link, mode, rep);
         match r {
             Ok((target, msg)) => {
@@ -265,7 +339,7 @@ pub fn unlink(links: &[String], mode: UnlinkMode, cb: &dyn Fn(&Progress)) -> Vec
             }
             Err(e) => (String::new(), Err(e)),
         }
-    })
+    }))
 }
 
 fn unlink_one(link: &Path, mode: UnlinkMode, rep: &mut Report) -> Result<(String, String), String> {
@@ -332,7 +406,7 @@ fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut R
     }
 
     let tmp = sibling(link, "dirlinker-restore");
-    let (aside, total) = copy_verify_aside(target, &tmp, rep)?;
+    let (aside, total, applied) = copy_verify_aside(target, &tmp, rep)?;
     rep("unlinking", Some(link), total, total);
     if let Err(e) = remove_link(link) {
         let _ = fs::rename(&aside, target);
@@ -350,8 +424,14 @@ fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut R
         });
     }
     rep("cleaning", Some(&aside), total, total);
+    // the copy was made under a temporary name and then renamed into place
+    let applied: Applied = applied
+        .into_iter()
+        .map(|(p, s)| (p.strip_prefix(&tmp).map(|rest| link.join(rest)).unwrap_or(p), s))
+        .collect();
+    let note = late_check(&applied);
     match remove_tree(&aside) {
-        Ok(_) => Ok(format!("Moved {} back and removed the link.", fmt_bytes(total))),
+        Ok(_) => Ok(format!("Moved {} back and removed the link.{note}", fmt_bytes(total))),
         Err(e) => Ok(format!(
             "Data moved back and link removed, but the old copy at {} could not be fully deleted ({e}).",
             display_path(&aside)
@@ -362,9 +442,9 @@ fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut R
 // ------------------------------------------------------------------ plain file operations
 
 /// Move items into `dest` (no links). Uses the same safe copy/verify path between drives.
-pub fn move_items(sources: &[String], dest: &str, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+pub fn move_items(sources: &[String], dest: &str, verify: bool, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
     let dest = crate::util::normalize_input(dest);
-    for_each_item(sources, cb, |src, rep| {
+    with_verify(verify, || for_each_item(sources, cb, |src, rep| {
         let Some(name) = src.file_name() else {
             return (String::new(), Err("Drive roots can't be moved.".into()));
         };
@@ -380,10 +460,11 @@ pub fn move_items(sources: &[String], dest: &str, cb: &dyn Fn(&Progress)) -> Vec
             rep("moving", Some(src), 0, 0);
             fs::rename(src, &target).map(|_| "Moved.".to_string()).map_err(|e| in_use_msg("Could not move", &e))
         } else {
-            copy_verify_aside(src, &target, rep).map(|(aside, total)| {
+            copy_verify_aside(src, &target, rep).map(|(aside, total, applied)| {
                 rep("cleaning", Some(&aside), total, total);
+                let note = late_check(&applied);
                 match remove_tree(&aside) {
-                    Ok(_) => format!("Moved {}.", fmt_bytes(total)),
+                    Ok(_) => format!("Moved {}.{note}", fmt_bytes(total)),
                     Err(e) => format!("Moved, but the old copy at {} could not be fully deleted ({e}).", display_path(&aside)),
                 }
             })
@@ -392,7 +473,7 @@ pub fn move_items(sources: &[String], dest: &str, cb: &dyn Fn(&Progress)) -> Vec
             registry::path_moved(&display_path(src), &tshow);
         }
         (tshow, r)
-    })
+    }))
 }
 
 fn check_name(name: &str) -> Result<(), String> {
@@ -597,46 +678,116 @@ fn copy_link(src: &Path, dst: &Path) -> io::Result<()> {
     }
 }
 
-fn copy_tree(src: &Path, dst: &Path, done: &mut u64, on: &mut dyn FnMut(&Path, u64)) -> io::Result<()> {
-    let md = fs::symlink_metadata(src)?;
-    if md.file_type().is_symlink() {
-        return copy_link(src, dst);
-    }
-    if md.is_dir() {
-        fs::create_dir(dst)?;
-        for e in fs::read_dir(src)? {
-            let e = e?;
-            copy_tree(&e.path(), &dst.join(e.file_name()), done, on)?;
+thread_local! {
+    /// "Verify file contents" option of the operation running on this thread.
+    static VERIFY_CONTENTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with the content-verification option set (operations run on one worker thread).
+fn with_verify<T>(verify: bool, f: impl FnOnce() -> T) -> T {
+    VERIFY_CONTENTS.with(|v| v.set(verify));
+    let r = f();
+    VERIFY_CONTENTS.with(|v| v.set(false));
+    r
+}
+
+/// Copies a tree keeping every piece of metadata (see [`crate::meta`]) and hard links
+/// between files inside the tree. Every item is read back and compared after copying.
+struct Copier<'a> {
+    clone: bool,
+    verify: bool,
+    done: u64,
+    files: u64,
+    /// file identity -> first copy, to re-create hard links instead of duplicating data
+    seen: std::collections::HashMap<(u64, u64), PathBuf>,
+    /// every copied item with the metadata applied to it (for the final re-check, see `settle`)
+    applied: Vec<(PathBuf, crate::meta::Snapshot)>,
+    /// metadata recorded before copying started (see `snapshot_tree`)
+    snaps: std::collections::HashMap<PathBuf, crate::meta::Snapshot>,
+    on: &'a mut dyn FnMut(&Path, u64),
+}
+
+impl Copier<'_> {
+    fn copy(&mut self, src: &Path, dst: &Path) -> Result<(), String> {
+        let ctx = |what: &str, e: io::Error| format!("{}: {what} failed ({e})", display_path(src));
+        // capture BEFORE reading the source, so the "accessed" date is the original one
+        let snap = match self.snaps.remove(src) {
+            Some(s) => s,
+            None => crate::meta::capture(src).map_err(|e| ctx("reading metadata", e))?,
+        };
+        let md = fs::symlink_metadata(src).map_err(|e| ctx("reading", e))?;
+
+        if md.file_type().is_symlink() {
+            copy_link(src, dst).map_err(|e| ctx("re-creating link", e))?;
+            crate::meta::apply_and_verify(dst, &snap)?;
+            self.applied.push((dst.to_path_buf(), snap));
+            return Ok(());
         }
-        if let Ok(m) = md.modified() {
-            let _ = fs::File::open(dst).and_then(|f| f.set_modified(m));
+        if md.is_dir() {
+            crate::meta::create_dir_like(src, dst).map_err(|e| ctx("creating folder", e))?;
+            for e in crate::fsx::list(src).map_err(|e| ctx("listing", e))? {
+                self.copy(&e.path, &dst.join(&e.name))?;
+            }
+            // folder metadata last: adding children changes its dates
+            crate::meta::apply_and_verify(dst, &snap)?;
+            self.applied.push((dst.to_path_buf(), snap));
+            return Ok(());
         }
-        Ok(())
-    } else {
-        *done += fs::copy(src, dst).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", display_path(src))))?;
-        on(src, *done);
+
+        // hard links inside the tree stay hard links
+        if crate::fsinfo::link_count(src).unwrap_or(1) > 1 {
+            if let Some(id) = crate::fsinfo::file_id(src) {
+                if let Some(first) = self.seen.get(&id) {
+                    fs::hard_link(first, dst).map_err(|e| ctx("re-creating hard link", e))?;
+                    self.done += md.len();
+                    self.files += 1;
+                    (self.on)(src, self.done);
+                    return Ok(());
+                }
+                self.seen.insert(id, dst.to_path_buf());
+            }
+        }
+
+        if self.clone {
+            reflink_copy::reflink(src, dst).map_err(|e| ctx("cloning", e))?;
+        } else {
+            fs::copy(src, dst).map_err(|e| ctx("copying", e))?;
+        }
+        if self.verify && !crate::meta::same_contents(src, dst).map_err(|e| ctx("verifying contents", e))? {
+            return Err(format!("{}: the copy's contents differ from the original — refusing to continue.", display_path(src)));
+        }
+        crate::meta::apply_and_verify(dst, &snap)?;
+        self.applied.push((dst.to_path_buf(), snap));
+        self.done += md.len();
+        self.files += 1;
+        (self.on)(src, self.done);
         Ok(())
     }
 }
 
-fn clone_tree(src: &Path, dst: &Path, done: &mut u64, on: &mut dyn FnMut(&Path, u64)) -> io::Result<()> {
-    let md = fs::symlink_metadata(src)?;
-    if md.file_type().is_symlink() {
-        return copy_link(src, dst);
-    }
-    if md.is_dir() {
-        fs::create_dir(dst)?;
-        for e in fs::read_dir(src)? {
-            let e = e?;
-            clone_tree(&e.path(), &dst.join(e.file_name()), done, on)?;
-        }
-        Ok(())
-    } else {
-        reflink_copy::reflink(src, dst)?;
-        *done += md.len();
-        on(src, *done);
-        Ok(())
-    }
+fn copy_tree(
+    src: &Path,
+    dst: &Path,
+    snaps: std::collections::HashMap<PathBuf, crate::meta::Snapshot>,
+    done: &mut u64,
+    files: &mut u64,
+    applied: &mut Vec<(PathBuf, crate::meta::Snapshot)>,
+    on: &mut dyn FnMut(&Path, u64),
+) -> Result<(), String> {
+    let verify = VERIFY_CONTENTS.with(|v| v.get());
+    let mut c = Copier { clone: false, verify, done: *done, files: 0, seen: Default::default(), applied: Vec::new(), snaps, on };
+    let r = c.copy(src, dst);
+    *done = c.done;
+    *files = c.files;
+    *applied = std::mem::take(&mut c.applied);
+    r
+}
+
+fn clone_tree(src: &Path, dst: &Path, done: &mut u64, on: &mut dyn FnMut(&Path, u64)) -> Result<(), String> {
+    let mut c = Copier { clone: true, verify: false, done: *done, files: 0, seen: Default::default(), applied: Vec::new(), snaps: Default::default(), on };
+    let r = c.copy(src, dst);
+    *done = c.done;
+    r
 }
 
 /// Delete a tree WITHOUT ever following links or junctions inside it.
@@ -681,4 +832,27 @@ fn clear_readonly(p: &Path) -> bool {
         }
         _ => false,
     }
+}
+
+/// Record the metadata of every item (each folder before it is listed) and count files/bytes.
+fn snapshot_tree(
+    p: &Path,
+    snaps: &mut std::collections::HashMap<PathBuf, crate::meta::Snapshot>,
+    total: &mut size::SizeInfo,
+) -> Result<(), String> {
+    let ctx = |e: io::Error| format!("{}: reading metadata failed ({e})", display_path(p));
+    snaps.insert(p.to_path_buf(), crate::meta::capture(p).map_err(ctx)?);
+    let md = fs::symlink_metadata(p).map_err(ctx)?;
+    if md.file_type().is_symlink() {
+        return Ok(());
+    }
+    if md.is_dir() {
+        for e in crate::fsx::list(p).map_err(ctx)? {
+            snapshot_tree(&e.path, snaps, total)?;
+        }
+    } else {
+        total.bytes += md.len();
+        total.files += 1;
+    }
+    Ok(())
 }

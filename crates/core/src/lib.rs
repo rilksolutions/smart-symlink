@@ -7,8 +7,10 @@
 //! - [`ops`]     the actual move + link operations (copy, verify, swap, rollback)
 
 pub mod fsinfo;
+pub mod fsx;
 pub mod links;
 pub mod listing;
+pub mod meta;
 pub mod ops;
 pub mod registry;
 pub mod size;

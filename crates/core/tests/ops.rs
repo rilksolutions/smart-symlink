@@ -47,7 +47,7 @@ fn link_kind_of(p: &Path) -> Option<LinkKind> {
 
 fn run(src: &Path, dest: &Path, kind: LinkKind, mode: Mode) -> ops::ItemResult {
     let r = ops::execute(
-        &Request { sources: vec![display_path(src)], dest: display_path(dest), kind, mode },
+        &Request { sources: vec![display_path(src)], dest: display_path(dest), kind, mode, verify: true },
         &|_| {},
     );
     r.into_iter().next().unwrap()
@@ -190,7 +190,7 @@ fn existing_target_is_refused() {
 }
 
 fn unlink(link: &Path, mode: ops::UnlinkMode) -> ops::ItemResult {
-    ops::unlink(&[display_path(link)], mode, &|_| {}).into_iter().next().unwrap()
+    ops::unlink(&[display_path(link)], mode, false, &|_| {}).into_iter().next().unwrap()
 }
 
 fn saved_links() -> Vec<String> {
@@ -289,7 +289,7 @@ fn hardlink_unlink_and_file_ops() {
     assert!(ops::create_dir(&display_path(&base), "bad/name").is_err());
     let renamed = ops::rename(&made, "Renamed").unwrap();
     assert!(Path::new(&renamed).is_dir());
-    let moved = ops::move_items(&[renamed.clone()], &display_path(&dest), &|_| {});
+    let moved = ops::move_items(&[renamed.clone()], &display_path(&dest), false, &|_| {});
     assert!(moved[0].ok, "{}", moved[0].message);
     assert!(dest.join("Renamed").is_dir());
     let del = ops::delete(&[display_path(&dest.join("Renamed"))], true, &|_| {});

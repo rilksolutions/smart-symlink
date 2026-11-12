@@ -92,13 +92,13 @@ async fn execute(app: AppHandle, req: ops::Request) -> Result<Vec<ops::ItemResul
 }
 
 #[tauri::command]
-async fn unlink(app: AppHandle, links: Vec<String>, mode: ops::UnlinkMode) -> Result<Vec<ops::ItemResult>, String> {
-    blocking(move || ops::unlink(&links, mode, &progress_emitter(app))).await
+async fn unlink(app: AppHandle, links: Vec<String>, mode: ops::UnlinkMode, verify: bool) -> Result<Vec<ops::ItemResult>, String> {
+    blocking(move || ops::unlink(&links, mode, verify, &progress_emitter(app))).await
 }
 
 #[tauri::command]
-async fn move_items(app: AppHandle, sources: Vec<String>, dest: String) -> Result<Vec<ops::ItemResult>, String> {
-    blocking(move || ops::move_items(&sources, &dest, &progress_emitter(app))).await
+async fn move_items(app: AppHandle, sources: Vec<String>, dest: String, verify: bool) -> Result<Vec<ops::ItemResult>, String> {
+    blocking(move || ops::move_items(&sources, &dest, verify, &progress_emitter(app))).await
 }
 
 #[tauri::command]
@@ -121,6 +121,21 @@ async fn rename_item(path: String, name: String) -> Result<String, String> {
 #[tauri::command]
 fn native_properties(path: String) -> Result<bool, String> {
     ops::native_properties(&path)
+}
+
+/// Restart elevated ("Run as administrator") so owners and auditing entries can be kept.
+#[tauri::command]
+fn restart_elevated(app: AppHandle) -> Result<(), String> {
+    if dirlinker_core::meta::restart_elevated()? {
+        app.exit(0);
+    }
+    Ok(())
+}
+
+/// Hint shown in dialogs when some metadata can only be kept with elevated rights.
+#[tauri::command]
+fn privileges_note() -> Option<&'static str> {
+    dirlinker_core::meta::privileges_note()
 }
 
 #[tauri::command]
@@ -181,6 +196,8 @@ fn main() {
             create_dir,
             rename_item,
             native_properties,
+            restart_elevated,
+            privileges_note,
             saved_links,
             forget_link,
             favorites,

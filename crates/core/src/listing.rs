@@ -59,16 +59,15 @@ const HARDLINK_SCAN_LIMIT: usize = 5000;
 
 pub fn list_dir(input: &str) -> Result<Listing, String> {
     let path = normalize_input(input);
-    let rd = fs::read_dir(&path).map_err(|e| friendly_io(&e, &path))?;
-    let raw: Vec<fs::DirEntry> = rd.filter_map(Result::ok).collect();
+    // quiet listing: browsing must not change the folder's "accessed" date
+    let raw = crate::fsx::list(&path).map_err(|e| friendly_io(&e, &path))?;
     let scan_hardlinks = raw.len() <= HARDLINK_SCAN_LIMIT;
 
     let entries = raw
         .iter()
-        .filter_map(|de| {
-            let p = de.path();
-            let md = fs::symlink_metadata(&p).ok()?;
-            Some(make_entry(&p, &md, scan_hardlinks))
+        .filter_map(|it| {
+            let md = fs::symlink_metadata(&it.path).ok()?;
+            Some(make_entry(&it.path, &md, scan_hardlinks))
         })
         .collect();
 

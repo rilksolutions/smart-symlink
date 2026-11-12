@@ -115,6 +115,8 @@ const app = {
   /** key(target) -> link path, for saved links that are intact */
   targets: new Map<string, string>(),
   theme: "system" as Theme,
+  verifyContents: false,
+  privNote: null as string | null,
 };
 
 const isWin = () => app.platform === "windows";
@@ -1292,12 +1294,14 @@ function showResults(title: string, results: ItemResult[], revealTarget: boolean
     )
     .join("");
   const first = results.find((r) => r.ok);
+  const needsAdmin = isWin() && results.some((r) => !r.ok && /administrator/i.test(r.message));
   showModal(
     `${head(bad ? icons.warn(22) : icons.check(22), bad ? (ok ? "Partly done" : "Failed") : "Done", `${ok} succeeded${bad ? `, ${bad} failed` : ""}`, bad ? "var(--danger)" : "var(--ok)")}
     <div class="m-body"><div class="m-items">${list}</div></div>
-    <div class="m-foot">${first && revealTarget ? `<button class="btn" id="m-reveal">Show in ${fmName()}</button>` : ""}<button class="btn primary" id="m-close">Close</button></div>`,
+    <div class="m-foot">${needsAdmin ? `<button class="btn" id="m-admin" style="margin-right:auto">${icons.shield(14)} Restart as administrator</button>` : ""}${first && revealTarget ? `<button class="btn" id="m-reveal">Show in ${fmName()}</button>` : ""}<button class="btn primary" id="m-close">Close</button></div>`,
     closeModal,
   );
+  if (needsAdmin) $("#m-admin").onclick = () => api.restartElevated().catch((e) => setStatus(String(e), true));
   $("#m-close").onclick = closeModal;
   if (first && revealTarget) $("#m-reveal").onclick = () => api.reveal(first.target || first.source).catch((e) => setStatus(String(e), true));
   setStatus(bad ? `${title}: ${bad} failed.` : `${title}: ${ok} done.`, bad > 0);
@@ -1325,6 +1329,21 @@ function promptName(title: string, icon: string, initial: string, okLabel: strin
   modal.onEnter = go;
   $("#m-ok").onclick = go;
   $("#m-cancel").onclick = closeModal;
+}
+
+/** Shown in every dialog that may copy data between drives. */
+function fidelityBlock(): string {
+  return `<div class="note">${icons.shield(15)}<span>Every date, attribute, owner and permission is kept exactly and checked after copying. If anything can't be kept, the operation stops and nothing is changed.${app.privNote ? " " + esc(app.privNote) : ""}</span></div>
+    <label class="check"><input type="checkbox" id="v-check" ${app.verifyContents ? "checked" : ""} /> Also compare the contents of every file after copying (slower)</label>`;
+}
+
+/** Read (and remember) the "compare contents" checkbox of the open dialog. */
+function readVerify(): boolean {
+  const c = document.getElementById("v-check") as HTMLInputElement | null;
+  if (!c) return false;
+  app.verifyContents = c.checked;
+  savePref("verifyContents", c.checked);
+  return c.checked;
 }
 
 // ================================================================ dialogs: link / unlink
@@ -1388,6 +1407,7 @@ function renderLinkDialog() {
       <div class="m-kinds" id="m-kinds">${chips}</div>
       <div class="m-items">${items}</div>
       ${notes}
+      ${moving && !a.sameVolume ? fidelityBlock() : ""}
     </div>
     <div class="m-foot"><button class="btn" id="m-cancel">Cancel</button><button class="btn primary" id="m-start" ${canStart ? "" : "disabled"}>${moving ? "Move & link" : "Create"}</button></div>`,
     canStart ? startLink : null,
@@ -1418,7 +1438,7 @@ function startLink() {
   app.kind = dlg.kind;
   app.pickedKind = dlg.kind;
   app.userPickedKind = true;
-  const req = { sources: dlg.sources, dest: dlg.dest, kind: dlg.kind, mode: dlg.mode };
+  const req = { sources: dlg.sources, dest: dlg.dest, kind: dlg.kind, mode: dlg.mode, verify: readVerify() };
   runOp(dlg.mode === "move" && !opt.keepsSource ? "Move & link" : "Create links", () => api.execute(req), { revealTarget: true });
 }
 
@@ -1446,6 +1466,7 @@ function openUnlinkDialog(entries: Entry[]) {
         <label class="opt"><input type="radio" name="um" value="remove" ${onlyHard ? "checked" : ""} /><b>Remove only the link</b>
           <span>The data stays where it is (at the target); only the link disappears.</span></label>
       </div>
+      ${onlyHard ? "" : fidelityBlock()}
     </div>
     <div class="m-foot"><button class="btn" id="m-cancel">Cancel</button><button class="btn primary" id="m-start">Unlink</button></div>`,
     () => $("#m-start").click(),
@@ -1453,7 +1474,8 @@ function openUnlinkDialog(entries: Entry[]) {
   $("#m-cancel").onclick = closeModal;
   $("#m-start").onclick = () => {
     const mode = ($<HTMLInputElement>('input[name="um"]:checked').value as UnlinkMode) ?? "restore";
-    runOp("Unlink", () => api.unlink(entries.map((e) => e.path), mode));
+    const verify = readVerify();
+    runOp("Unlink", () => api.unlink(entries.map((e) => e.path), mode, verify));
   };
 }
 
@@ -1533,18 +1555,16 @@ async function moveItems(items: Entry[], dest: string) {
   showModal(
     `${head(icons.move(22), `Move ${items.length} item${items.length > 1 ? "s" : ""}`, `to ${dest}`)}
     <div class="m-body"><div class="m-items">${list}</div>${warn}
-      <div class="note">${icons.info(15)}<span>A plain move — no link is left behind. Between drives the data is copied, verified, and only then removed.</span></div></div>
+      <div class="note">${icons.info(15)}<span>A plain move — no link is left behind. Between drives the data is copied, verified, and only then removed.</span></div>
+      ${fidelityBlock()}</div>
     <div class="m-foot"><button class="btn" id="m-cancel">Cancel</button><button class="btn primary" id="m-mv">Move</button></div>`,
     () => $("#m-mv").click(),
   );
   $("#m-cancel").onclick = closeModal;
-  $("#m-mv").onclick = () =>
-    runOp("Move", () =>
-      api.moveItems(
-        items.map((e) => e.path),
-        dest,
-      ),
-    );
+  $("#m-mv").onclick = () => {
+    const verify = readVerify();
+    runOp("Move", () => api.moveItems(items.map((e) => e.path), dest, verify));
+  };
 }
 
 async function showProperties(path: string) {
@@ -1942,6 +1962,7 @@ $("#theme-btn").addEventListener("click", () => applyTheme(THEMES[(THEMES.indexO
   }
   app.showHidden = loadPref("showHidden", false);
   app.showDot = loadPref("showDot", false);
+  app.verifyContents = loadPref("verifyContents", false);
   $<HTMLInputElement>("#opt-hidden").checked = app.showHidden;
   $<HTMLInputElement>("#opt-dot").checked = app.showDot;
   try {
@@ -1951,6 +1972,7 @@ $("#theme-btn").addEventListener("click", () => applyTheme(THEMES[(THEMES.indexO
     /* running outside Tauri (plain browser) */
   }
   if (!isWin()) $("#opt-hidden-wrap").classList.add("hidden");
+  app.privNote = await api.privilegesNote().catch(() => null);
   await reloadStore();
   setActive(0);
   await Promise.all(panes.map((p) => p.navigate(null)));

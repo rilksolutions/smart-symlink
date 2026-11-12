@@ -31,6 +31,28 @@ cargo test -p dirlinker-core            # integration tests (real junctions/link
 
 Every step before the final delete rolls back on failure. Deleting never follows links or junctions.
 
+## Nothing about the files changes
+
+Between drives, every file and folder keeps exactly:
+
+| | Windows | Linux / macOS |
+|---|---|---|
+| Created / modified / accessed dates | ✅ | modified + accessed (ns); a creation date can't be set on Linux |
+| Attributes (read-only, hidden, system, archive, not-indexed, compressed, encrypted) | ✅ | – |
+| Owner, group, permissions (ACL incl. inheritance flags) | ✅ (auditing/SACL: as administrator) | owner, group, mode incl. setuid/sticky |
+| Alternate data streams / extended attributes (incl. POSIX ACLs, SELinux labels) | ✅ | ✅ |
+| Hard links inside the moved folder | ✅ stay hard links | ✅ |
+
+Each item is read back and compared after copying; any difference stops the operation and nothing is changed.
+If something needs elevated rights (e.g. files owned by Administrators), the result offers *Restart as administrator*.
+
+DirLinker never changes "last accessed" dates by itself — not even when browsing or measuring folder sizes
+(it lists folders through handles with access-time updates switched off, `O_NOATIME` on Linux). Other programs
+(search indexers, sync / backup tools, antivirus) may still read new files right after they are written; DirLinker
+restores the original date and, if another program keeps changing it, says so in the result.
+
+Optional: *Also compare the contents of every file after copying* (byte by byte, slower).
+
 ## Link types offered
 
 | | Windows | Linux | macOS |

@@ -519,6 +519,7 @@ impl App {
             dest: self.dst.path.as_deref().map(display_path).unwrap_or_default(),
             kind,
             mode: self.mode,
+            verify: false,
         };
         let (tx, rx) = mpsc::channel();
         self.op_rx = Some(rx);
