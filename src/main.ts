@@ -576,7 +576,7 @@ class Pane {
       empty.classList.toggle("hidden", this.rows.length > 0);
       empty.textContent =
         this.view === "links"
-          ? "No saved links yet. Every link you create with DirLinker shows up here."
+          ? "No saved links yet. Every link you create with Smart Symlink shows up here."
           : this.listing?.entries.length
             ? "Only hidden items here — turn on “Hidden” or “.dotfiles” in the header to see them."
             : "This folder is empty.";
@@ -626,7 +626,7 @@ class Pane {
         <span class="unfav" data-unfav="${esc(f)}" title="Remove from Quick Access">${icons.star(14)}</span></button>`);
     if (this.isSource)
       quick.push(`<button class="drive" data-mount="${LINKS}"><span class="drive-ico links-ico">${icons.link(34)}</span>
-        <span class="drive-main"><div class="drive-name">Saved links <small>${app.saved.length}</small></div><div class="drive-meta"><span>Links created with DirLinker</span></div></span></button>`);
+        <span class="drive-main"><div class="drive-name">Saved links <small>${app.saved.length}</small></div><div class="drive-meta"><span>Links created with Smart Symlink</span></div></span></button>`);
     const tip = app.favorites.length ? "" : `<div class="drives-title faint" style="font-weight:400">Tip: click the ☆ next to a folder (or right-click it) to pin it here.</div>`;
     return `<div class="drives-title">Drives</div>${cards.join("")}<div class="drives-title">Quick access</div>${quick.join("")}${tip}`;
   }
@@ -916,7 +916,7 @@ class Pane {
       this.selectionChanged();
     }
     app.dragging = [...this.selected];
-    e.dataTransfer.setData("application/x-dirlinker", JSON.stringify(app.dragging));
+    e.dataTransfer.setData("application/x-smart-symlink", JSON.stringify(app.dragging));
     e.dataTransfer.effectAllowed = "link";
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
@@ -1070,7 +1070,7 @@ function renderLinkBar() {
   const noSel = sourcePaths().length === 0;
 
   $("#fs-info").textContent = noSel
-    ? a.dstFs
+    ? destPath() && a.dstFs
       ? `destination: ${a.dstFs}`
       : ""
     : a.srcFs || a.dstFs
@@ -1257,7 +1257,7 @@ async function runOp(title: string, call: () => Promise<ItemResult[]>, opts: { r
       <div class="prog-meta"><span id="p-phase">Preparing</span><span id="p-bytes"></span></div>
       <div class="prog-file" id="p-file"></div>
     </div></div>
-    <div class="m-foot"><span class="faint" style="margin-right:auto">Please keep DirLinker open until this finishes.</span></div>`);
+    <div class="m-foot"><span class="faint" style="margin-right:auto">Please keep Smart Symlink open until this finishes.</span></div>`);
   const sub = $("#modal-box .m-head p");
   const unlisten = await api.onProgress((p: Progress) => {
     sub.textContent = `${p.itemCount > 1 ? `(${p.itemIndex + 1}/${p.itemCount}) ` : ""}${p.item}`;

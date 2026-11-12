@@ -268,7 +268,7 @@ pub fn analyze(sources: &[String], dest: &str, mode: Mode) -> Analysis {
                     Some("Bind mounts work for folders only.".into())
                 } else if !root {
                     needs_admin = true;
-                    Some("Needs root — start DirLinker with sudo.".into())
+                    Some("Needs root — start Smart Symlink with sudo.".into())
                 } else {
                     None
                 }

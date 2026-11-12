@@ -1,4 +1,4 @@
-# DirLinker
+# Smart Symlink
 
 Move folders to another drive and leave a link behind, so programs keep working.
 Dual-pane GUI (Tauri) plus a keyboard-driven terminal version, sharing one Rust core.
@@ -10,7 +10,7 @@ Dual-pane GUI (Tauri) plus a keyboard-driven terminal version, sharing one Rust 
 | `crates/core` | All file logic: drives, listing, link detection, folder sizes, link-type rules, move + link |
 | `src-tauri` | GUI backend (thin Tauri command layer over the core) |
 | `src/` | GUI frontend (TypeScript, no framework) |
-| `crates/tui` | Terminal UI (`dirlinker-tui`, ratatui) |
+| `crates/tui` | Terminal UI (`smart-symlink-tui`, ratatui) |
 
 ## Run / build
 
@@ -18,15 +18,15 @@ Dual-pane GUI (Tauri) plus a keyboard-driven terminal version, sharing one Rust 
 npm install
 npm run app:dev                         # GUI with hot reload
 npx tauri build                         # release GUI + installer (NSIS on Windows, deb/AppImage on Linux, dmg on macOS)
-npx tauri build --no-bundle             # just the exe: target/release/dirlinker.exe
-cargo run -p dirlinker-tui --release    # terminal version (starts in the current folder)
-cargo test -p dirlinker-core            # integration tests (real junctions/links in temp folders)
+npx tauri build --no-bundle             # just the exe: target/release/smart-symlink.exe
+cargo run -p smart-symlink-tui --release    # terminal version (starts in the current folder)
+cargo test -p smart-symlink-core            # integration tests (real junctions/links in temp folders)
 ```
 
 ## How "Move & link back" works
 
 1. Same drive: rename (instant), then create the link at the original path.
-2. Different drives: copy → verify file count and bytes → rename the original to `<name>.dirlinker-old`
+2. Different drives: copy → verify file count and bytes → rename the original to `<name>.smart-symlink-old`
    (fails if a program has files open: the copy is removed and nothing changes) → create the link → delete the old copy.
 
 Every step before the final delete rolls back on failure. Deleting never follows links or junctions.
@@ -46,9 +46,9 @@ Between drives, every file and folder keeps exactly:
 Each item is read back and compared after copying; any difference stops the operation and nothing is changed.
 If something needs elevated rights (e.g. files owned by Administrators), the result offers *Restart as administrator*.
 
-DirLinker never changes "last accessed" dates by itself — not even when browsing or measuring folder sizes
+Smart Symlink never changes "last accessed" dates by itself — not even when browsing or measuring folder sizes
 (it lists folders through handles with access-time updates switched off, `O_NOATIME` on Linux). Other programs
-(search indexers, sync / backup tools, antivirus) may still read new files right after they are written; DirLinker
+(search indexers, sync / backup tools, antivirus) may still read new files right after they are written; Smart Symlink
 restores the original date and, if another program keeps changing it, says so in the result.
 
 Optional: *Also compare the contents of every file after copying* (byte by byte, slower).

@@ -1,7 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dirlinker_core::{fsinfo, links, listing, ops, registry, size, util};
+use smart_symlink_core::{fsinfo, links, listing, ops, registry, size, util};
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -126,7 +126,7 @@ fn native_properties(path: String) -> Result<bool, String> {
 /// Restart elevated ("Run as administrator") so owners and auditing entries can be kept.
 #[tauri::command]
 fn restart_elevated(app: AppHandle) -> Result<(), String> {
-    if dirlinker_core::meta::restart_elevated()? {
+    if smart_symlink_core::meta::restart_elevated()? {
         app.exit(0);
     }
     Ok(())
@@ -135,7 +135,7 @@ fn restart_elevated(app: AppHandle) -> Result<(), String> {
 /// Hint shown in dialogs when some metadata can only be kept with elevated rights.
 #[tauri::command]
 fn privileges_note() -> Option<&'static str> {
-    dirlinker_core::meta::privileges_note()
+    smart_symlink_core::meta::privileges_note()
 }
 
 #[tauri::command]
@@ -206,5 +206,5 @@ fn main() {
             reveal
         ])
         .run(tauri::generate_context!())
-        .expect("error while running DirLinker");
+        .expect("error while running Smart Symlink");
 }

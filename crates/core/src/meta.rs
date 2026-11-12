@@ -62,7 +62,7 @@ pub fn same_contents(a: &Path, b: &Path) -> io::Result<bool> {
 }
 
 fn describe(p: &Path, verb: &str, e: &MetaError) -> String {
-    let admin = if cfg!(windows) { "Run DirLinker as administrator" } else { "Run DirLinker with sudo" };
+    let admin = if cfg!(windows) { "Run Smart Symlink as administrator" } else { "Run Smart Symlink with sudo" };
     match e {
         MetaError::Privilege(what) => format!(
             "{}: {verb} the {what} — this needs elevated rights. {admin} so nothing about the files changes. Nothing was changed.",
@@ -91,7 +91,7 @@ impl MetaError {
 #[cfg(windows)]
 mod imp {
     //! Everything goes through file handles on which "last access" updates are switched off
-    //! right after opening (SetFileTime with 0xFFFFFFFF), so DirLinker's own reads and
+    //! right after opening (SetFileTime with 0xFFFFFFFF), so Smart Symlink's own reads and
     //! writes never count as an access to the file or folder.
     use super::MetaError;
     use std::fs;
@@ -543,6 +543,6 @@ pub fn restart_elevated() -> Result<bool, String> {
     }
     #[cfg(not(windows))]
     {
-        Err("Start DirLinker with sudo to keep owners of other users' files.".into())
+        Err("Start Smart Symlink with sudo to keep owners of other users' files.".into())
     }
 }

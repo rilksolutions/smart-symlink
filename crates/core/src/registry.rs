@@ -10,7 +10,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub const APP_DIR: &str = "DirLinker";
+/// Settings folder name (Linux convention: lowercase).
+pub const APP_DIR: &str = if cfg!(any(windows, target_os = "macos")) { "Smart Symlink" } else { "smart-symlink" };
+/// Folder used before the app was renamed; its state is copied over once.
+const LEGACY_APP_DIR: &str = "DirLinker";
 static LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -37,9 +40,13 @@ pub struct Store {
 }
 
 pub fn config_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("DIRLINKER_CONFIG_DIR") {
+    if let Some(dir) = std::env::var_os("SMART_SYMLINK_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
+    config_base().join(APP_DIR)
+}
+
+fn config_base() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {
@@ -49,11 +56,19 @@ pub fn config_dir() -> PathBuf {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     };
-    base.unwrap_or_else(std::env::temp_dir).join(APP_DIR)
+    base.unwrap_or_else(std::env::temp_dir)
 }
 
 fn store_path() -> PathBuf {
-    config_dir().join("state.json")
+    let p = config_dir().join("state.json");
+    // one-time migration from the old app name (saved links + favorites)
+    if std::env::var_os("SMART_SYMLINK_CONFIG_DIR").is_none() && !p.exists() {
+        let legacy = config_base().join(LEGACY_APP_DIR).join("state.json");
+        if legacy.exists() && fs::create_dir_all(config_dir()).is_ok() {
+            let _ = fs::copy(&legacy, &p);
+        }
+    }
+    p
 }
 
 pub fn load() -> Store {

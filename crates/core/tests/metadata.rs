@@ -2,10 +2,10 @@
 //! unusual metadata, move it (forcing the copy path even on single-drive machines), compare
 //! every item against snapshots taken beforehand, then unlink (move back) and compare again.
 
-use dirlinker_core::links::{LinkKind, Mode};
-use dirlinker_core::meta;
-use dirlinker_core::ops::{self, Request, UnlinkMode};
-use dirlinker_core::util::display_path;
+use smart_symlink_core::links::{LinkKind, Mode};
+use smart_symlink_core::meta;
+use smart_symlink_core::ops::{self, Request, UnlinkMode};
+use smart_symlink_core::util::display_path;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,18 +13,18 @@ use std::path::{Path, PathBuf};
 fn setup() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let cfg = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dirlinker-meta-config-{}", std::process::id()));
+        let cfg = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("smart-symlink-meta-config-{}", std::process::id()));
         // SAFETY: set once before any test reads them, always to the same values.
         unsafe {
-            std::env::set_var("DIRLINKER_CONFIG_DIR", cfg);
-            std::env::set_var("DIRLINKER_FORCE_COPY", "1");
+            std::env::set_var("SMART_SYMLINK_CONFIG_DIR", cfg);
+            std::env::set_var("SMART_SYMLINK_FORCE_COPY", "1");
         }
     });
 }
 
 fn fresh(base: &Path, name: &str) -> PathBuf {
     setup();
-    let p = base.join(format!("dirlinker-meta-{name}-{}", std::process::id()));
+    let p = base.join(format!("smart-symlink-meta-{name}-{}", std::process::id()));
     let _ = ops::remove_tree(&p);
     fs::create_dir_all(&p).unwrap();
     p
@@ -109,8 +109,8 @@ fn move_and_unlink_keep_every_detail_windows() {
     assert_same(&moved, &before);
     // (the alternate data stream is checked at the end: reading it here would bump its access date)
     assert_eq!(
-        dirlinker_core::fsinfo::file_id(&moved.join("f3.txt")),
-        dirlinker_core::fsinfo::file_id(&moved.join("sub/f3-link.txt")),
+        smart_symlink_core::fsinfo::file_id(&moved.join("f3.txt")),
+        smart_symlink_core::fsinfo::file_id(&moved.join("sub/f3-link.txt")),
         "hard link inside the tree must stay a hard link"
     );
 
@@ -138,7 +138,7 @@ fn move_and_unlink_keep_every_detail_unix() {
     fs::write(src.join("f3.txt"), "hard linked").unwrap();
     fs::hard_link(src.join("f3.txt"), src.join("sub/f3-link.txt")).unwrap();
     std::os::unix::fs::symlink("f1.txt", src.join("rel-link")).unwrap();
-    let _ = xattr::set(src.join("f1.txt"), "user.dirlinker", b"kept"); // ignored if the filesystem can't
+    let _ = xattr::set(src.join("f1.txt"), "user.smart-symlink", b"kept"); // ignored if the filesystem can't
     fs::set_permissions(src.join("f1.txt"), fs::Permissions::from_mode(0o640)).unwrap();
     fs::set_permissions(src.join("sub/f2.bin"), fs::Permissions::from_mode(0o751)).unwrap();
     fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o750)).unwrap();
@@ -157,8 +157,8 @@ fn move_and_unlink_keep_every_detail_unix() {
     assert_same(&moved, &before);
     assert_eq!(fs::read_link(moved.join("rel-link")).unwrap(), Path::new("f1.txt"));
     assert_eq!(
-        dirlinker_core::fsinfo::file_id(&moved.join("f3.txt")),
-        dirlinker_core::fsinfo::file_id(&moved.join("sub/f3-link.txt"))
+        smart_symlink_core::fsinfo::file_id(&moved.join("f3.txt")),
+        smart_symlink_core::fsinfo::file_id(&moved.join("sub/f3-link.txt"))
     );
 
     run_unlink(&src);
@@ -191,8 +191,8 @@ fn browsing_and_sizes_do_not_touch_access_dates() {
         set_old(&base.join(d));
     }
     let before = snapshot(&base, &["a", "a/b", "a/b/f.txt"]);
-    dirlinker_core::listing::list_dir(&display_path(&base.join("a"))).unwrap();
-    dirlinker_core::size::dir_size(&base.join("a"), None).unwrap();
+    smart_symlink_core::listing::list_dir(&display_path(&base.join("a"))).unwrap();
+    smart_symlink_core::size::dir_size(&base.join("a"), None).unwrap();
     assert_same(&base, &before);
     ops::remove_tree(&base).unwrap();
 }

@@ -2,7 +2,7 @@
 //!
 //! 1. copy source -> target
 //! 2. verify (file count + bytes)
-//! 3. rename source -> `<name>.dirlinker-old` (fails if something holds files open -> abort, nothing changed)
+//! 3. rename source -> `<name>.smart-symlink-old` (fails if something holds files open -> abort, nothing changed)
 //! 4. create the link at the original path
 //! 5. delete the renamed original
 //!
@@ -169,7 +169,7 @@ fn run_item(src: &Path, target: &Path, kind: LinkKind, mode: Mode, rep: &mut Rep
 
 fn same_volume(a: &Path, b: &Path) -> bool {
     // test hook: force the copy path even when everything is on one drive
-    if std::env::var_os("DIRLINKER_FORCE_COPY").is_some() {
+    if std::env::var_os("SMART_SYMLINK_FORCE_COPY").is_some() {
         return false;
     }
     match (crate::fsinfo::vol_info(a), crate::fsinfo::vol_info(b)) {
@@ -218,7 +218,7 @@ fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(Pat
         let _ = remove_tree(target);
         return Err(format!("{e}. Copy removed, nothing changed."));
     }
-    let aside = sibling(src, "dirlinker-old");
+    let aside = sibling(src, "smart-symlink-old");
     if let Err(e) = fs::rename(src, &aside) {
         let _ = remove_tree(target);
         return Err(in_use_msg(&format!("{} is in use and can't be moved", display_path(src)), &e) + " Copy removed, nothing changed.");
@@ -230,7 +230,7 @@ fn copy_verify_aside(src: &Path, target: &Path, rep: &mut Report) -> Result<(Pat
 ///
 /// Everything must end up identical, with one exception: the "last accessed" date. Any program that
 /// reads a file or lists a folder (indexers, sync/backup tools, antivirus) updates it, and some keep
-/// doing so whenever the item changes. DirLinker restores it; if another program keeps changing it,
+/// doing so whenever the item changes. Smart Symlink restores it; if another program keeps changing it,
 /// the result carries a note instead of failing. Retries for ~3 s.
 ///
 /// Ok(None): all identical. Ok(Some(note)): only "accessed" dates were changed by another program.
@@ -249,7 +249,7 @@ fn settle(applied: &[(PathBuf, crate::meta::Snapshot)]) -> Result<Option<String>
             if only_accessed {
                 return Ok(Some(format!(
                     " Note: another program on this computer (e.g. a search indexer, sync, backup or antivirus tool) keeps reading \
-                     {} of the copied items, which updates their “last accessed” date. DirLinker restored the original dates, but \
+                     {} of the copied items, which updates their “last accessed” date. Smart Symlink restored the original dates, but \
                      that program changed them again. Everything else is exactly as before.",
                     bad.len()
                 )));
@@ -405,7 +405,7 @@ fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut R
         return Ok("Data moved back and link removed.".into());
     }
 
-    let tmp = sibling(link, "dirlinker-restore");
+    let tmp = sibling(link, "smart-symlink-restore");
     let (aside, total, applied) = copy_verify_aside(target, &tmp, rep)?;
     rep("unlinking", Some(link), total, total);
     if let Err(e) = remove_link(link) {

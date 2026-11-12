@@ -1,7 +1,7 @@
 //! Folder listing that does not change the folder's "last accessed" date.
 //!
 //! Plain listing (FindFirstFile / readdir) counts as an access and bumps the date when
-//! access-time updates are enabled. DirLinker lists folders constantly (browsing, folder
+//! access-time updates are enabled. Smart Symlink lists folders constantly (browsing, folder
 //! sizes, copying), so it uses this instead:
 //! - Windows: open the folder, tell NTFS to not update the access time for this handle
 //!   (`SetFileTime` with 0xFFFFFFFF), then enumerate through that handle.

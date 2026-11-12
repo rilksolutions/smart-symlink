@@ -1,5 +1,5 @@
 {
-  "name": "dirlinker",
+  "name": "smart-symlink",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,7 +9,7 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
-    "tui": "cargo run -p dirlinker-tui --release"
+    "tui": "cargo run -p smart-symlink-tui --release"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",

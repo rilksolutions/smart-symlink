@@ -1,4 +1,4 @@
-//! Shared core for DirLinker: used by both the GUI (Tauri) and the terminal UI.
+//! Shared core for Smart Symlink: used by both the GUI (Tauri) and the terminal UI.
 //!
 //! - [`fsinfo`]  drives, volume / filesystem detection, capability probing
 //! - [`listing`] directory listing with link detection

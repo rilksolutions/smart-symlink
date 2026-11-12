@@ -254,9 +254,9 @@ pub fn can_symlink() -> bool {
     *CACHE.get_or_init(|| {
         #[cfg(windows)]
         {
-            let probe = std::env::temp_dir().join(format!("dirlinker-probe-{}", std::process::id()));
+            let probe = std::env::temp_dir().join(format!("smart-symlink-probe-{}", std::process::id()));
             let _ = std::fs::remove_file(&probe);
-            let ok = std::os::windows::fs::symlink_file("dirlinker-probe-target", &probe).is_ok();
+            let ok = std::os::windows::fs::symlink_file("smart-symlink-probe-target", &probe).is_ok();
             let _ = std::fs::remove_file(&probe);
             ok
         }

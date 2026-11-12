@@ -1,16 +1,16 @@
-//! DirLinker terminal UI.
+//! Smart Symlink terminal UI.
 //!
 //! Source screen:  ↑↓/jk move · Enter/→/l open · Backspace/←/h up · Space select · Enter (with selection) or Tab → destination
 //! Dest screen:    navigate the same way · t cycle link type · m toggle move/link-only · Ctrl+Enter (or Ctrl+J / F2) link
 //!
-//! Run:  dirlinker-tui [start-folder]
+//! Run:  smart-symlink-tui [start-folder]
 
-use dirlinker_core::fsinfo::{self, DriveInfo};
-use dirlinker_core::links::{self, Analysis, LinkKind, Mode};
-use dirlinker_core::listing::{self, Entry};
-use dirlinker_core::ops::{self, ItemResult, Progress};
-use dirlinker_core::size::{self, SizeInfo};
-use dirlinker_core::util::{display_path, fmt_bytes};
+use smart_symlink_core::fsinfo::{self, DriveInfo};
+use smart_symlink_core::links::{self, Analysis, LinkKind, Mode};
+use smart_symlink_core::listing::{self, Entry};
+use smart_symlink_core::ops::{self, ItemResult, Progress};
+use smart_symlink_core::size::{self, SizeInfo};
+use smart_symlink_core::util::{display_path, fmt_bytes};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -547,7 +547,7 @@ fn draw(f: &mut Frame, app: &mut App) {
     };
     f.render_widget(
         Line::from(vec![
-            Span::styled(" ⛓ DirLinker ", Style::new().fg(Color::White).bg(ACCENT).bold()),
+            Span::styled(" ⛓ Smart Symlink ", Style::new().fg(Color::White).bg(ACCENT).bold()),
             Span::raw("  "),
             Span::styled(title, Style::new().bold()),
             Span::styled(

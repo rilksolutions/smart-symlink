@@ -735,42 +735,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dirlinker"
-version = "0.1.0"
-dependencies = [
- "dirlinker-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "dirlinker-core"
-version = "0.1.0"
-dependencies = [
- "filetime",
- "junction",
- "libc",
- "rayon",
- "reflink-copy",
- "serde",
- "serde_json",
- "sysinfo",
- "trash",
- "windows-sys 0.61.2",
- "xattr",
-]
-
-[[package]]
-name = "dirlinker-tui"
-version = "0.1.0"
-dependencies = [
- "dirlinker-core",
- "ratatui",
-]
-
-[[package]]
 name = "dirs"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3728,6 +3692,42 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "smart-symlink"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "smart-symlink-core",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "smart-symlink-core"
+version = "0.1.0"
+dependencies = [
+ "filetime",
+ "junction",
+ "libc",
+ "rayon",
+ "reflink-copy",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "trash",
+ "windows-sys 0.61.2",
+ "xattr",
+]
+
+[[package]]
+name = "smart-symlink-tui"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "smart-symlink-core",
+]
 
 [[package]]
 name = "socket2"

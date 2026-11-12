@@ -67,10 +67,10 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Test core (real links in temp folders)
-        run: cargo test -p dirlinker-core
+        run: cargo test -p smart-symlink-core
 
       - name: Build terminal version
-        run: cargo build --release -p dirlinker-tui
+        run: cargo build --release -p smart-symlink-tui
 
       - name: Build GUI and installers
         run: npx tauri build --bundles ${{ matrix.bundles }}
@@ -79,10 +79,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp "target/release/dirlinker-tui${{ matrix.exe }}" "out/dirlinker-tui-${{ matrix.name }}${{ matrix.exe }}"
+          cp "target/release/smart-symlink-tui${{ matrix.exe }}" "out/smart-symlink-tui-${{ matrix.name }}${{ matrix.exe }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
             # portable exe (no installer needed, uses the WebView2 that ships with Windows 10/11)
-            cp target/release/dirlinker.exe "out/dirlinker-portable-${{ matrix.name }}.exe"
+            cp target/release/smart-symlink.exe "out/smart-symlink-portable-${{ matrix.name }}.exe"
             cp target/release/bundle/nsis/*.exe out/
           elif [ "${{ runner.os }}" = "Linux" ]; then
             cp target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage out/
@@ -93,7 +93,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dirlinker-${{ matrix.name }}
+          name: smart-symlink-${{ matrix.name }}
           path: out/*
           if-no-files-found: error
 
@@ -117,5 +117,5 @@ jobs:
           ls -la dist
           gh release create "${{ github.ref_name }}" dist/* \
             --repo "${{ github.repository }}" \
-            --title "DirLinker ${{ github.ref_name }}" \
+            --title "Smart Symlink ${{ github.ref_name }}" \
             --generate-notes --draft

@@ -2,10 +2,10 @@
 //! Cross-volume tests use the system temp dir and Cargo's target tmp dir; they only
 //! exercise the cross-drive path when those are on different volumes.
 
-use dirlinker_core::links::{self, LinkKind, Mode};
-use dirlinker_core::listing;
-use dirlinker_core::ops::{self, Request};
-use dirlinker_core::util::display_path;
+use smart_symlink_core::links::{self, LinkKind, Mode};
+use smart_symlink_core::listing;
+use smart_symlink_core::ops::{self, Request};
+use smart_symlink_core::util::display_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,15 +13,15 @@ use std::path::{Path, PathBuf};
 fn isolate() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dirlinker-test-config-{}", std::process::id()));
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("smart-symlink-test-config-{}", std::process::id()));
         // SAFETY: set once, before any test reads it, always to the same value.
-        unsafe { std::env::set_var("DIRLINKER_CONFIG_DIR", dir) };
+        unsafe { std::env::set_var("SMART_SYMLINK_CONFIG_DIR", dir) };
     });
 }
 
 fn fresh(base: &Path, name: &str) -> PathBuf {
     isolate();
-    let p =base.join(format!("dirlinker-test-{name}-{}", std::process::id()));
+    let p =base.join(format!("smart-symlink-test-{name}-{}", std::process::id()));
     let _ = ops::remove_tree(&p);
     fs::create_dir_all(&p).unwrap();
     p
@@ -85,7 +85,7 @@ fn move_and_link_cross_volume() {
     assert_eq!(link_kind_of(&src), Some(move_kind()));
     assert_tree(&b.join("home"));
     assert_tree(&src);
-    // the temporary ".dirlinker-old" copy must be gone
+    // the temporary ".smart-symlink-old" copy must be gone
     let leftovers: Vec<_> = fs::read_dir(&a).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
     assert_eq!(leftovers.len(), 1, "unexpected leftovers: {leftovers:?}");
     ops::remove_tree(&a).unwrap();
@@ -194,7 +194,7 @@ fn unlink(link: &Path, mode: ops::UnlinkMode) -> ops::ItemResult {
 }
 
 fn saved_links() -> Vec<String> {
-    dirlinker_core::registry::load().links.into_iter().map(|l| l.link).collect()
+    smart_symlink_core::registry::load().links.into_iter().map(|l| l.link).collect()
 }
 
 #[test]
