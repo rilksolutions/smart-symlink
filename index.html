@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DirLinker</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="app-head">
+      <div class="brand">
+        <div class="brand-logo" id="brand-logo"></div>
+        <div>
+          <div class="brand-name">DirLinker</div>
+          <div class="brand-sub">Move folders anywhere — keep them where programs expect them</div>
+        </div>
+      </div>
+      <div class="head-toggles">
+        <label class="switch"><input type="checkbox" id="opt-sizes" checked /><span></span>Folder sizes</label>
+        <label class="switch"><input type="checkbox" id="opt-follow" checked /><span></span>Show link targets</label>
+        <label class="switch"><input type="checkbox" id="opt-hidden" /><span></span>Hidden items</label>
+      </div>
+    </header>
+
+    <main class="panes">
+      <section class="pane" id="pane-0"></section>
+      <div class="rail">
+        <button class="link-btn" id="link-btn" disabled title="Create links (Ctrl+Enter)">
+          <span class="link-btn-ico" id="link-btn-ico"></span>
+          <span class="link-btn-label">Link</span>
+        </button>
+        <div class="rail-hint" id="rail-hint">select on the left</div>
+      </div>
+      <section class="pane" id="pane-1"></section>
+    </main>
+
+    <section class="linkbar">
+      <div class="lb-col lb-mode">
+        <div class="lb-title">Operation</div>
+        <div class="seg" id="mode-seg">
+          <button data-mode="move" class="on">Move &amp; link back</button>
+          <button data-mode="link">Link only</button>
+        </div>
+        <div class="lb-mode-desc" id="mode-desc"></div>
+        <div class="lb-preview" id="preview"></div>
+      </div>
+      <div class="lb-col lb-kinds">
+        <div class="lb-title">Link type <span class="lb-fs" id="fs-info"></span></div>
+        <div class="kinds" id="kinds"></div>
+      </div>
+      <div class="lb-col lb-detail" id="kind-detail"></div>
+    </section>
+
+    <footer class="statusbar">
+      <div class="legend">
+        <span><i class="dot junction"></i>Junction</span>
+        <span><i class="dot symlink"></i>Symbolic link</span>
+        <span><i class="dot hardlink"></i>Hard link</span>
+        <span><i class="dot broken"></i>Broken link</span>
+      </div>
+      <div class="status-msg" id="status-msg"></div>
+      <div class="keys">Dbl-click / tap: open · Backspace: up · Space: select · Tab: switch pane · Ctrl+Enter: link</div>
+    </footer>
+
+    <div class="modal-backdrop hidden" id="modal"><div class="modal" id="modal-box"></div></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

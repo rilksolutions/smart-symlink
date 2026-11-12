@@ -1,0 +1,22 @@
+{
+  "name": "dirlinker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "tui": "cargo run -p dirlinker-tui --release"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4"
+  }
+}

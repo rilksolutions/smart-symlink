@@ -1,0 +1,17 @@
+[package]
+name = "dirlinker-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rayon = "1.12.0"
+reflink-copy = "0.1.32"
+serde = { version = "1.0.229", features = ["derive"] }
+sysinfo = { version = "0.40.3", default-features = false, features = ["disk"] }
+
+[target."cfg(windows)".dependencies]
+junction = "2.1.0"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"

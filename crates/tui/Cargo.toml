@@ -1,0 +1,8 @@
+[package]
+name = "dirlinker-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirlinker-core = { version = "0.1.0", path = "../core" }
+ratatui = "0.30.2"
