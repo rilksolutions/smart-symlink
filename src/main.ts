@@ -680,7 +680,8 @@ class Pane {
       th.innerHTML = `${th.dataset.label}${on ? `<span class="arr">${this.sort.dir === 1 ? "▲" : "▼"}</span>` : ""}`;
     });
 
-    const up = `<tr class="up-row" data-up><td class="c-check"></td><td><div class="name"><span class="ico">${icons.up()}</span><span class="nm">..</span></div></td><td class="c-size"></td><td class="c-mod"></td><td class="c-type"></td></tr>`;
+    const upName = this.view === "links" || !this.listing?.parent ? (isWin() ? "This PC" : "Computer") : baseName(this.listing.parent);
+    const up = `<tr class="up-row" data-up title="Go up to ${esc(upName)} (Backspace)"><td class="c-check"></td><td colspan="4"><div class="name"><span class="ico">${icons.up()}</span><span class="nm">..</span><span class="up-to">Up to ${esc(upName)}</span></div></td></tr>`;
     const links = this.view === "links";
     const html = this.rows.map((e, i) => {
       const lk = linkClass(e);
@@ -1130,6 +1131,7 @@ function renderPreview() {
   const opt = chosenOption();
   const arrow = icons.arrowRight(13);
 
+  $("#relink-btn").classList.toggle("hidden", !relinkable());
   const un = unlinkable();
   btn.classList.toggle("unlink", !!un);
   $("#link-btn-label").textContent = un ? "Unlink" : "Link";
@@ -1199,12 +1201,56 @@ $("#mode-seg").addEventListener("click", (e) => {
   }
 });
 $("#link-btn").addEventListener("click", () => primaryAction());
+$("#relink-btn").addEventListener("click", () => relinkAction());
+$("#swap-btn").addEventListener("click", () => swapPanes());
 
 function primaryAction() {
   const un = unlinkable();
   if (un) openUnlinkDialog(un);
   else openLinkDialog(sourcePaths(), destPath());
 }
+
+/** The selected links on the left, if all of them can be re-linked (junctions / symbolic links with a live target). */
+function relinkable(): Entry[] | null {
+  const un = unlinkable();
+  return un && un.every((e) => e.link?.kind === "junction" || e.link?.kind === "symlink") ? un : null;
+}
+
+function relinkAction() {
+  const links = relinkable();
+  if (!links) return setStatus("Select one or more junctions or symbolic links on the left first.", true);
+  const dest = destPath();
+  if (!dest) return setStatus("Open a folder on the right first — that is where the linked data will live.", true);
+  openRelinkDialog(links, dest);
+}
+
+/** Swap what the two panes show (e.g. to link a folder back after removing its junction). */
+async function swapPanes() {
+  const [l, r] = panes;
+  if (l.view === "links") return setStatus("Saved links can only be shown on the left — open a folder there first.", true);
+  const [a, b] = [l.view === "dir" ? l.path : null, r.view === "dir" ? r.path : null];
+  await Promise.all([l.navigate(b), r.navigate(a)]);
+  setStatus("Swapped left and right.");
+}
+
+// Mouse "back" / "forward" buttons navigate the pane under the pointer.
+window.addEventListener(
+  "mouseup",
+  (e) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    if (modal.open) return;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>(".pane");
+    const p = panes.find((x) => x.el === el) ?? panes[app.active];
+    setActive(p.id);
+    if (e.button === 3) p.goBack();
+    else p.goForward();
+  },
+  true,
+);
+// stop the webview from using those buttons for its own page history
+window.addEventListener("mousedown", (e) => (e.button === 3 || e.button === 4) && e.preventDefault(), true);
+window.addEventListener("auxclick", (e) => (e.button === 3 || e.button === 4) && e.preventDefault(), true);
 
 // ================================================================ modal infrastructure
 
@@ -1479,6 +1525,98 @@ function openUnlinkDialog(entries: Entry[]) {
   };
 }
 
+const rdlg = {
+  links: [] as Entry[],
+  dest: "",
+  kind: null as LinkKind | null,
+  analysis: null as Analysis | null,
+};
+
+/** Re-link: keep the link where it is, move its data into `dest` and/or change the link type. */
+async function openRelinkDialog(links: Entry[], dest: string) {
+  Object.assign(rdlg, { links, dest, kind: null, analysis: null });
+  try {
+    rdlg.analysis = await api.relinkOptions(links.map((e) => e.path), dest);
+  } catch (e) {
+    return setStatus(String(e), true);
+  }
+  const a = rdlg.analysis!;
+  // default: keep the type the links have now, so the first choice is "just move the data"
+  const kinds = new Set(links.map((e) => e.link!.kind));
+  const current = kinds.size === 1 ? [...kinds][0] : null;
+  rdlg.kind = a.options.find((o) => o.kind === current && o.available)?.kind ?? a.recommended;
+  renderRelinkDialog();
+}
+
+function renderRelinkDialog() {
+  const a = rdlg.analysis!;
+  const opt = a.options.find((o) => o.kind === rdlg.kind);
+  const arrow = icons.arrowRight(16);
+  const P = (p: string) => `<span class="pp" title="${esc(p)}"><bdi>${esc(p)}</bdi></span>`;
+  const same = (x: string, y: string) => (isWin() ? x.toLowerCase() === y.toLowerCase() : x === y);
+  let changes = 0;
+  let moves = 0;
+  const items = rdlg.links
+    .map((e, i) => {
+      const cur = e.link?.target ?? "";
+      const next = a.targets[i] ?? cur;
+      const moved = !same(cur, next);
+      const retyped = !!rdlg.kind && e.link?.kind !== rdlg.kind;
+      if (moved || retyped) changes++;
+      if (moved) moves++;
+      const was = KIND_LABEL[e.link!.kind].toLowerCase();
+      const linkNote = retyped ? `${esc(was)} becomes a ${esc(opt?.title.toLowerCase() ?? "link")}` : `stays a ${esc(was)} here`;
+      const dataNote = moved ? `data moves here from ${esc(cur)}` : "data stays here";
+      return `<div class="m-item"><div class="p">${P(e.path)}<small>${linkNote}</small></div>${arrow}<div class="p">${P(next)}<small>${dataNote}</small></div></div>`;
+    })
+    .join("");
+  const chips = a.options
+    .map(
+      (o) =>
+        `<button class="chip ${o.kind === rdlg.kind ? "on" : ""}" data-kind="${o.kind}" ${o.available ? "" : "disabled"} title="${esc(o.available ? o.short : (o.reason ?? ""))}">${esc(o.title)}</button>`,
+    )
+    .join("");
+  const nothing = a.blocking.length === 0 && changes === 0;
+  const notes = [
+    ...a.blocking.map((b) => `<div class="note err">${icons.warn(15)}<span>${esc(b)}</span></div>`),
+    nothing
+      ? `<div class="note warn">${icons.warn(15)}<span>Nothing would change: the data is already in this folder and the link type is the same. Open another folder on the right, or pick a different link type.</span></div>`
+      : "",
+    ...(a.blocking.length || nothing ? [] : a.warnings).map((w) => `<div class="note warn">${icons.warn(15)}<span>${esc(w)}</span></div>`),
+    `<div class="note">${icons.relink(15)}<span>The link stays where it is, so programs keep using the same path. If anything fails, the data and the old link are put back.</span></div>`,
+  ].join("");
+  const canStart = !!opt?.available && a.blocking.length === 0 && changes > 0;
+  const n = rdlg.links.length;
+
+  showModal(
+    `${head(icons.relink(22), "Re-link", `${n} link${n > 1 ? "s" : ""} → ${rdlg.dest}`, "linear-gradient(135deg,#0fb5a2,#4f8cff)")}
+    <div class="m-body">
+      <div class="m-kinds" id="m-kinds">${chips}</div>
+      <div class="m-items">${items}</div>
+      ${notes}
+      ${moves > 0 && !a.sameVolume && !a.blocking.length ? fidelityBlock() : ""}
+    </div>
+    <div class="m-foot"><button class="btn" id="m-cancel">Cancel</button><button class="btn primary" id="m-start" ${canStart ? "" : "disabled"}>${moves > 0 ? "Move & re-link" : "Re-link"}</button></div>`,
+    canStart ? startRelink : null,
+  );
+  $("#m-cancel").onclick = closeModal;
+  $("#m-start").onclick = startRelink;
+  $("#m-kinds").onclick = (e) => {
+    const k = (e.target as HTMLElement).closest<HTMLElement>("[data-kind]")?.dataset.kind as LinkKind | undefined;
+    if (k) {
+      rdlg.kind = k;
+      renderRelinkDialog();
+    }
+  };
+}
+
+function startRelink() {
+  const a = rdlg.analysis;
+  if (!a || !rdlg.kind || a.blocking.length || !a.options.find((o) => o.kind === rdlg.kind)?.available) return;
+  const req = { links: rdlg.links.map((e) => e.path), dest: rdlg.dest, kind: rdlg.kind, verify: readVerify() };
+  runOp("Re-link", () => api.relink(req), { revealTarget: true });
+}
+
 // ================================================================ dialogs: file operations
 
 async function linkWarning(paths: string[], verb: string): Promise<string> {
@@ -1649,6 +1787,8 @@ function showHelp() {
         <h4 style="margin-top:16px">Actions</h4>
         ${rows([
           [k("Ctrl", "Enter"), "Link — or Unlink when links are selected"],
+          [k("Ctrl", "R"), "Re-link: move a link's data or change its type"],
+          [k("Ctrl", "U"), "Swap left and right"],
           [k("F2"), "Rename"],
           [k("Del"), "Delete"],
           [k("Ctrl", "Shift", "N"), "New folder"],
@@ -1661,6 +1801,7 @@ function showHelp() {
           ["Click · Ctrl+click · Shift+click", "Select on the left"],
           ["Drag left → right", "Link into that folder"],
           ["Right-click", "Rename, delete, move, properties…"],
+          ["Mouse back / forward buttons", "Back / forward in the pane under the pointer"],
           ["☆ next to a folder", "Pin to Quick Access"],
           ["Click a link (left)", "Shows its real folder on the right"],
         ])}
@@ -1723,6 +1864,7 @@ function itemMenu(p: Pane, items: Entry[], _e: MouseEvent) {
   if (p.view === "links" && one) m.push({ label: "Go to link location", icon: icons.open(), run: () => p.open(one) });
   if (one?.link?.target && one.link.targetExists) m.push({ label: "Show link target", icon: icons.target(16), run: () => revealLinkTarget(one) });
   if (un) m.push({ label: un.length > 1 ? `Unlink ${un.length} links…` : "Unlink…", icon: icons.unlink(16), hint: p.isSource ? "Ctrl+Enter" : "", run: () => openUnlinkDialog(un) });
+  if (p.isSource && relinkable()) m.push({ label: "Re-link…", icon: icons.relink(16), hint: "Ctrl+R", run: () => relinkAction() });
   if (p.view === "links" && saved.length)
     m.push({
       label: saved.length > 1 ? "Forget these entries" : "Forget this entry",
@@ -1812,6 +1954,8 @@ document.addEventListener("keydown", (e) => {
   if (k === "?" || (k === "F1" && !ctrl)) return void (e.preventDefault(), showHelp());
   if (k === "Tab") return void (e.preventDefault(), setActive(1 - app.active));
   if (k === "Enter" && ctrl) return void primaryAction();
+  if (ctrl && !e.shiftKey && k.toLowerCase() === "r") return void (e.preventDefault(), relinkAction());
+  if (ctrl && k.toLowerCase() === "u") return void (e.preventDefault(), swapPanes());
   if (k === "F5") return void (e.preventDefault(), p.refresh());
   if (ctrl && k.toLowerCase() === "l") return void (e.preventDefault(), p.editPath());
   if (ctrl && e.shiftKey && k.toLowerCase() === "n") return void (e.preventDefault(), newFolder(p));
@@ -1953,6 +2097,8 @@ $("#theme-btn").addEventListener("click", () => applyTheme(THEMES[(THEMES.indexO
 (async function init() {
   $("#brand-logo").innerHTML = icons.link(22);
   $("#link-btn-ico").innerHTML = icons.link(26);
+  $("#relink-ico").innerHTML = icons.relink(18);
+  $("#swap-ico").innerHTML = icons.swap(18);
   $("#saved-ico").innerHTML = icons.list(16);
   $("#help-btn").innerHTML = icons.keyboard();
   try {

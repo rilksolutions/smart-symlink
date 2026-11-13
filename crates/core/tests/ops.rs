@@ -297,3 +297,69 @@ fn hardlink_unlink_and_file_ops() {
     assert!(!dest.join("Renamed").exists());
     ops::remove_tree(&base).unwrap();
 }
+
+fn relink(link: &Path, dest: &Path, kind: LinkKind) -> ops::ItemResult {
+    let req = ops::RelinkRequest { links: vec![display_path(link)], dest: display_path(dest), kind, verify: true };
+    ops::relink(&req, &|_| {}).into_iter().next().unwrap()
+}
+
+#[test]
+fn relink_moves_the_data_and_keeps_the_link_path() {
+    let a = fresh(&std::env::temp_dir(), "relink-a");
+    let b = fresh(Path::new(env!("CARGO_TARGET_TMPDIR")), "relink-b");
+    let src = a.join("home");
+    let first = a.join("D");
+    let second = a.join("E");
+    make_tree(&src);
+    fs::create_dir(&first).unwrap();
+    fs::create_dir(&second).unwrap();
+    assert!(run(&src, &first, move_kind(), Mode::Move).ok);
+
+    // analysis: new location, and "nothing moves" when the data is already in the destination
+    let an = links::analyze_relink(&[display_path(&src)], &display_path(&second));
+    assert!(an.blocking.is_empty(), "{:?}", an.blocking);
+    assert_eq!(an.targets, vec![display_path(&second.join("home"))]);
+    let stay = links::analyze_relink(&[display_path(&src)], &display_path(&first));
+    assert_eq!(stay.targets, vec![display_path(&first.join("home"))]);
+
+    // same place + same type: refused, nothing touched
+    let r = relink(&src, &first, move_kind());
+    assert!(!r.ok);
+    assert_tree(&src);
+
+    // same volume
+    let r = relink(&src, &second, move_kind());
+    assert!(r.ok, "{}", r.message);
+    assert_eq!(link_kind_of(&src), Some(move_kind()));
+    assert!(!first.join("home").exists());
+    assert_tree(&second.join("home"));
+    assert_tree(&src);
+
+    // other volume (when the two temp folders are on different drives)
+    let r = relink(&src, &b, move_kind());
+    assert!(r.ok, "{}", r.message);
+    assert!(!second.join("home").exists());
+    assert_eq!(fs::read_dir(&second).unwrap().count(), 0, "leftover temp folders");
+    assert_tree(&b.join("home"));
+    assert_tree(&src);
+    let saved = smart_symlink_core::registry::load().links.into_iter().find(|l| l.link == display_path(&src)).unwrap();
+    assert_eq!(saved.target, display_path(&b.join("home")));
+
+    // a name that is already taken in the destination: refused, link still works
+    fs::create_dir(first.join("home")).unwrap();
+    let r = relink(&src, &first, move_kind());
+    assert!(!r.ok);
+    assert_tree(&src);
+
+    // change only the link type (Windows: junction <-> symlink, needs the right to create symlinks)
+    if cfg!(windows) && smart_symlink_core::fsinfo::can_symlink() {
+        let r = relink(&src, &b, LinkKind::Symlink);
+        assert!(r.ok, "{}", r.message);
+        assert_eq!(link_kind_of(&src), Some(LinkKind::Symlink));
+        assert_tree(&src);
+        assert_tree(&b.join("home"));
+    }
+    assert!(unlink(&src, ops::UnlinkMode::Remove).ok);
+    ops::remove_tree(&a).unwrap();
+    ops::remove_tree(&b).unwrap();
+}

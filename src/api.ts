@@ -124,6 +124,8 @@ export const api = {
   invalidateSizes: (path: string | null) => invoke<void>("invalidate_sizes", { path }),
   linkOptions: (sources: string[], dest: string, mode: Mode) =>
     invoke<Analysis>("link_options", { sources, dest, mode }),
+  relinkOptions: (links: string[], dest: string) => invoke<Analysis>("relink_options", { links, dest }),
+  relink: (req: { links: string[]; dest: string; kind: LinkKind; verify: boolean }) => invoke<ItemResult[]>("relink", { req }),
   execute: (req: { sources: string[]; dest: string; kind: LinkKind; mode: Mode; verify: boolean }) =>
     invoke<ItemResult[]>("execute", { req }),
   reveal: (path: string) => invoke<void>("reveal", { path }),

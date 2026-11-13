@@ -439,6 +439,134 @@ fn restore(link: &Path, target: &Path, kind: LinkKind, is_dir: bool, rep: &mut R
     }
 }
 
+// ------------------------------------------------------------------ re-link
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RelinkRequest {
+    pub links: Vec<String>,
+    /// Folder the data should live in (the data keeps its name). If it is already there, only the link is re-created.
+    pub dest: String,
+    pub kind: LinkKind,
+    #[serde(default)]
+    pub verify: bool,
+}
+
+/// Re-create existing links: move the data they point to into `dest` and/or change the link type.
+/// The link path itself stays the same. If anything fails, the data and the old link are put back.
+pub fn relink(req: &RelinkRequest, cb: &dyn Fn(&Progress)) -> Vec<ItemResult> {
+    let dest = crate::util::normalize_input(&req.dest);
+    with_verify(req.verify, || for_each_item(&req.links, cb, |link, rep| match relink_one(link, &dest, req.kind, rep) {
+        Ok((target, msg)) => {
+            let shown = display_path(link);
+            let moved = registry::load().links.iter().find(|l| registry::same_path(&l.link, &shown)).is_none_or(|l| l.moved);
+            registry::add_link(SavedLink { link: shown, target: target.clone(), kind: req.kind, created: registry::now_ms(), moved });
+            (target, Ok(msg))
+        }
+        Err(e) => (String::new(), Err(e)),
+    }))
+}
+
+fn relink_one(link: &Path, dest: &Path, kind: LinkKind, rep: &mut Report) -> Result<(String, String), String> {
+    if !matches!(kind, LinkKind::Junction | LinkKind::Symlink) {
+        return Err("Re-linking works with junctions and symbolic links.".into());
+    }
+    let md = fs::symlink_metadata(link).map_err(|e| format!("Can't read {}: {e}", display_path(link)))?;
+    if !md.file_type().is_symlink() {
+        return Err("This is not a junction or symbolic link.".into());
+    }
+    let old_kind = if is_junction(link) { LinkKind::Junction } else { LinkKind::Symlink };
+    let old = link_target(link).ok_or("Can't read where the link points.")?;
+    let oshow = display_path(&old);
+    let tmd = fs::symlink_metadata(&old).map_err(|_| format!("The link points to {oshow}, which no longer exists."))?;
+    if tmd.file_type().is_symlink() {
+        return Err(format!("{oshow} is itself a link — unlink that one first."));
+    }
+    let is_dir = tmd.is_dir();
+    if kind == LinkKind::Junction && !is_dir {
+        return Err("Junctions work for folders only.".into());
+    }
+    let new = crate::links::relink_target(&old, dest);
+    let nshow = display_path(&new);
+    let moving = new != old;
+    if !moving && kind == old_kind {
+        return Err("Nothing to change: same place and same link type.".into());
+    }
+    if moving {
+        if !dest.is_dir() {
+            return Err(format!("{} is not an accessible folder.", display_path(dest)));
+        }
+        if dest.starts_with(&old) {
+            return Err("Can't move a folder into itself.".into());
+        }
+        if new == link {
+            return Err("That is where the link itself is — use Unlink to move the data back.".into());
+        }
+        if fs::symlink_metadata(&new).is_ok() {
+            return Err(format!("{nshow} already exists."));
+        }
+    }
+
+    // 1. move the data (the old copy is kept aside until the new link exists)
+    let mut aside: Option<(PathBuf, u64, Applied)> = None;
+    if moving {
+        if same_volume(&old, dest) {
+            rep("moving", Some(&old), 0, 0);
+            fs::rename(&old, &new).map_err(|e| in_use_msg("Could not move the data", &e) + " Nothing was changed.")?;
+        } else {
+            aside = Some(copy_verify_aside(&old, &new, rep)?);
+        }
+    }
+    let total = aside.as_ref().map(|a| a.1).unwrap_or(0);
+    // puts the data back where it was
+    let undo_move = |aside: &Option<(PathBuf, u64, Applied)>| -> bool {
+        if !moving {
+            return true;
+        }
+        match aside {
+            Some((a, _, _)) => {
+                let back = fs::rename(a, &old).is_ok();
+                if back {
+                    let _ = remove_tree(&new);
+                }
+                back
+            }
+            None => fs::rename(&new, &old).is_ok(),
+        }
+    };
+
+    // 2. replace the link
+    rep("linking", Some(link), total, total);
+    if let Err(e) = remove_link(link) {
+        return Err(if undo_move(&aside) {
+            format!("Could not remove the old link: {e}. Nothing was changed.")
+        } else {
+            format!("Could not remove the old link: {e}. WARNING: the data is now at {nshow}.")
+        });
+    }
+    if let Err(e) = create_link(kind, link, &new, is_dir) {
+        let back = undo_move(&aside);
+        let data = if back { &old } else { &new };
+        return Err(match create_link(old_kind, link, data, is_dir) {
+            Ok(_) if back => format!("{e} The old link was restored, nothing changed."),
+            Ok(_) => format!("{e} The data could not be moved back, so the old link now points to {nshow}."),
+            Err(e2) => format!("{e} The old link could not be re-created either ({e2}). The data is safe at {}.", display_path(data)),
+        });
+    }
+
+    // 3. clean up
+    let what = if kind == old_kind { String::new() } else { format!(" The link is now a {}.", crate::links::text(kind).title.to_lowercase()) };
+    let Some((a, total, applied)) = aside else {
+        return Ok((nshow.clone(), if moving { format!("Data moved to {nshow} and re-linked.{what}") } else { format!("Link re-created.{what}") }));
+    };
+    rep("cleaning", Some(&a), total, total);
+    let note = late_check(&applied);
+    Ok((nshow.clone(), match remove_tree(&a) {
+        Ok(_) => format!("Moved {} to {nshow} and re-linked.{what}{note}", fmt_bytes(total)),
+        Err(e) => format!("Moved and re-linked, but the old copy at {} could not be fully deleted ({e}). You can delete it manually.", display_path(&a)),
+    }))
+}
+
 // ------------------------------------------------------------------ plain file operations
 
 /// Move items into `dest` (no links). Uses the same safe copy/verify path between drives.

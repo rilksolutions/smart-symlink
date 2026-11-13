@@ -344,3 +344,148 @@ pub fn analyze(sources: &[String], dest: &str, mode: Mode) -> Analysis {
         targets,
     }
 }
+
+/// Options for re-linking existing links: the data moves into `dest` (or stays, if it is already
+/// there) and the link is re-created with the chosen type. `targets` are the new data locations.
+pub fn analyze_relink(links: &[String], dest: &str) -> Analysis {
+    let lnks: Vec<PathBuf> = links.iter().map(|s| crate::util::normalize_input(s)).collect();
+    let dest_p = crate::util::normalize_input(dest);
+    let mut blocking = Vec::new();
+    let mut warnings = Vec::new();
+    if lnks.is_empty() {
+        blocking.push("Select one or more links on the left.".to_string());
+    }
+    if dest.trim().is_empty() {
+        blocking.push("Open a destination folder on the right.".to_string());
+    } else if !dest_p.is_dir() {
+        blocking.push(format!("Destination {} is not an accessible folder.", display_path(&dest_p)));
+    }
+
+    let (mut all_dirs, mut all_files, mut any_move) = (!lnks.is_empty(), !lnks.is_empty(), false);
+    let mut targets = Vec::new();
+    let mut data: Vec<PathBuf> = Vec::new();
+    for l in &lnks {
+        let name = file_name_string(l);
+        let is_link = fs::symlink_metadata(l).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+        let Some(cur) = crate::ops::link_target(l).filter(|_| is_link) else {
+            blocking.push(format!("'{name}' is not a junction or symbolic link."));
+            continue;
+        };
+        match fs::symlink_metadata(&cur) {
+            Ok(md) if md.file_type().is_symlink() => {
+                blocking.push(format!("'{name}' points to another link — unlink that one first."));
+            }
+            Ok(md) => {
+                if md.is_dir() {
+                    all_files = false;
+                } else {
+                    all_dirs = false;
+                }
+            }
+            Err(_) => {
+                blocking.push(format!("'{name}' points to {}, which no longer exists.", display_path(&cur)));
+                continue;
+            }
+        }
+        if dest.trim().is_empty() {
+            continue;
+        }
+        let new = relink_target(&cur, &dest_p);
+        if new != cur {
+            any_move = true;
+            if dest_p.starts_with(&cur) {
+                blocking.push(format!("The destination is inside the folder '{name}' points to."));
+            } else if &new == l {
+                blocking.push(format!("'{name}' itself is in that folder — use Unlink to move the data back."));
+            } else if fs::symlink_metadata(&new).is_ok() {
+                blocking.push(format!("'{}' already exists in the destination.", file_name_string(&new)));
+            }
+        }
+        targets.push(display_path(&new));
+        data.push(cur);
+    }
+
+    let dvol = fsinfo::vol_info(&dest_p).unwrap_or_default();
+    let hosts: Vec<VolInfo> = lnks.iter().filter_map(|l| fsinfo::vol_info(l.parent().unwrap_or(l))).collect();
+    let dvols: Vec<VolInfo> = data.iter().filter_map(|d| fsinfo::vol_info(d.parent().unwrap_or(d))).collect();
+    let same_volume = !dvols.is_empty() && dvols.iter().all(|v| v.same_volume(&dvol));
+    let host_fs = hosts.first().map(|v| v.label()).unwrap_or_default();
+    let host_symlinks = hosts.iter().all(|v| v.symlinks);
+    let can_symlink = fsinfo::can_symlink();
+
+    let mut options: Vec<LinkOption> = Vec::new();
+    for &kind in kinds_for_os() {
+        let mut needs_admin = false;
+        let reason: Option<String> = match kind {
+            LinkKind::Junction => {
+                if !all_dirs {
+                    Some("Junctions work for folders only.".into())
+                } else if !host_symlinks {
+                    Some(format!("{host_fs} can't store junctions."))
+                } else if hosts.iter().any(|v| v.remote) {
+                    Some("A junction must be created on a local drive.".into())
+                } else if dvol.remote {
+                    Some("Junctions can't point to network locations — use a symbolic link.".into())
+                } else {
+                    None
+                }
+            }
+            LinkKind::Symlink => {
+                if !host_symlinks {
+                    Some(format!("{host_fs} doesn't support symbolic links."))
+                } else if !can_symlink {
+                    needs_admin = true;
+                    Some("Needs Developer Mode (Settings › System › For developers) or running as administrator.".into())
+                } else {
+                    None
+                }
+            }
+            _ => continue,
+        };
+        let t = text(kind);
+        options.push(LinkOption {
+            kind,
+            title: t.title.into(),
+            short: t.short.into(),
+            details: t.details.into(),
+            use_when: t.use_when.into(),
+            available: reason.is_none(),
+            reason,
+            needs_admin,
+            recommended: false,
+            keeps_source: false,
+        });
+    }
+    let recommended = options.iter().find(|o| o.available).map(|o| o.kind);
+    for o in &mut options {
+        o.recommended = Some(o.kind) == recommended;
+    }
+
+    if blocking.is_empty() {
+        warnings.push(if !any_move {
+            "The data stays where it is — only the link is re-created.".to_string()
+        } else if same_volume {
+            "Same drive: moving is instant (just a rename).".to_string()
+        } else {
+            "Different drives: data is copied, verified, and only then removed from the old place.".to_string()
+        });
+    }
+
+    Analysis {
+        options,
+        src_fs: dvols.first().map(|v| v.label()).unwrap_or_default(),
+        dst_fs: dvol.label(),
+        same_volume,
+        all_dirs,
+        all_files,
+        recommended,
+        blocking,
+        warnings,
+        targets,
+    }
+}
+
+/// Where a link's data ends up when re-linking into `dest`: unchanged if it is already in there.
+pub fn relink_target(current: &std::path::Path, dest: &std::path::Path) -> PathBuf {
+    if current.parent() == Some(dest) { current.to_path_buf() } else { dest.join(current.file_name().unwrap_or_default()) }
+}

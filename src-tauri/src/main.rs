@@ -87,6 +87,16 @@ async fn link_options(sources: Vec<String>, dest: String, mode: links::Mode) -> 
 }
 
 #[tauri::command]
+async fn relink_options(links: Vec<String>, dest: String) -> Result<links::Analysis, String> {
+    blocking(move || links::analyze_relink(&links, &dest)).await
+}
+
+#[tauri::command]
+async fn relink(app: AppHandle, req: ops::RelinkRequest) -> Result<Vec<ops::ItemResult>, String> {
+    blocking(move || ops::relink(&req, &progress_emitter(app))).await
+}
+
+#[tauri::command]
 async fn execute(app: AppHandle, req: ops::Request) -> Result<Vec<ops::ItemResult>, String> {
     blocking(move || ops::execute(&req, &progress_emitter(app))).await
 }
@@ -189,6 +199,8 @@ fn main() {
             cancel_sizes,
             invalidate_sizes,
             link_options,
+            relink_options,
+            relink,
             execute,
             unlink,
             move_items,

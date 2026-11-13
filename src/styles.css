@@ -556,3 +556,28 @@ tr:hover .fav, .fav.on { opacity: 1; }
 .drive-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drive[data-fav] .drive-meta span, .drive-meta span.path { direction: rtl; text-align: left; }
 .drive-main { overflow: hidden; }
+
+/* ---------- rail: secondary buttons ---------- */
+.rail-btn {
+  width: 60px; padding: 8px 0 7px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 600;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.rail-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); background: var(--panel-3); }
+.rail-btn:disabled { opacity: 0.45; }
+.rail-btn span { display: grid; }
+#relink-btn { color: var(--junction); border-color: color-mix(in srgb, var(--junction) 40%, transparent); }
+#relink-btn:hover { background: color-mix(in srgb, var(--junction) 12%, var(--panel-2)); }
+.rail-btn.swap { margin-top: 14px; }
+
+/* ---------- "up one folder" row: stays visible and reads as a button ---------- */
+.files thead th { height: 34px; box-sizing: border-box; }
+.files tbody tr.up-row { cursor: pointer; }
+.files tbody tr.up-row td { position: sticky; top: 34px; z-index: 1; background: var(--panel); border-bottom-color: var(--border); }
+.up-row .ico { color: var(--muted); transition: transform 0.12s, color 0.12s; }
+.up-row .nm { color: var(--muted); font-weight: 600; }
+.up-row .up-to { color: var(--faint); margin-left: 10px; font-size: 12px; }
+.files tbody tr.up-row:hover td { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.up-row:hover .ico { color: var(--accent); transform: translateY(-2px); }
+.up-row:hover .nm, .up-row:hover .up-to { color: var(--accent); }
+.up-row:active td { background: var(--sel-strong) !important; }

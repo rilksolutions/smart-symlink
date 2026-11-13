@@ -35,6 +35,8 @@ export const icons = {
   shield: (size = 14) => s(`<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>`, size),
   unlink: (size = 26) =>
     s(`<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4"/><path d="M3 3l18 18"/>`, size),
+  swap: (size = 18) => s(`<path d="M4 8h15"/><path d="M15 4l4 4-4 4"/><path d="M20 16H5"/><path d="M9 12l-4 4 4 4"/>`, size),
+  relink: (size = 18) => s(`<path d="M20 11a8 8 0 0 0-14.500-4.300"/><path d="M5 3v4h4"/><path d="M4 13a8 8 0 0 0 14.500 4.300"/><path d="M19 21v-4h-4"/>`, size),
   folderPlus: (size = 22) =>
     s(`<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.4l2 2.2h8.6A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M12 11v6M9 14h6"/>`, size),
   trash: (size = 16) => s(`<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>`, size),
