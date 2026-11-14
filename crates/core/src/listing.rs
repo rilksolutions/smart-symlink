@@ -152,7 +152,7 @@ pub fn is_junction(p: &Path) -> bool {
 pub fn detect_link(p: &Path, md: &Metadata, scan_hardlinks: bool) -> Option<LinkInfo> {
     if md.file_type().is_symlink() {
         let kind = if is_junction(p) { LinkKind::Junction } else { LinkKind::Symlink };
-        let target = fs::read_link(p).ok().map(|t| {
+        let target = crate::fsx::read_link(p).ok().map(|t| {
             let t = crate::util::clean_path(&t);
             if t.is_relative() {
                 p.parent().map(|par| par.join(&t)).unwrap_or(t)

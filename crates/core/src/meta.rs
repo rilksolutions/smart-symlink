@@ -351,11 +351,17 @@ mod imp {
 
         if let Some(sd) = sd {
             // 1. permissions (+ auditing) first: the original ACL is what grants us the right to change the owner
-            let acl_info = info & (DACL | SACL);
+            // Auditing entries (only readable as administrator): a new file already carries the same
+            // "auto-inherited, no entries" state as most originals. Setting an empty list again would
+            // drop that flag, and it can't be put back without entries, so leave it when it already matches.
+            let mut acl_info = info & DACL;
+            if info & SACL != 0 && !get_sd(&f, SACL).is_ok_and(|now| sddl(&now, SACL) == sddl(sd, SACL)) {
+                acl_info |= SACL;
+            }
             set_sd(&f, acl_info, sd).map_err(|e| MetaError::from_io("permissions (ACL)", e))?;
             // The plain set drops the "auto-inherited" (AI) flag; setting the identical ACL again with
             // the matching "auto-inherit request" bit restores it (the ACEs are already identical).
-            if let Some(req) = with_auto_inherit_request(sd) {
+            if let Some(req) = with_auto_inherit_request(sd, acl_info) {
                 set_sd(&f, acl_info, &req).map_err(|e| MetaError::from_io("permissions (ACL)", e))?;
             }
             // 2. owner + group, only if they differ from what the copy already has
@@ -391,17 +397,23 @@ mod imp {
         if i.dwFileAttributes & COMPARED != s.attrs & COMPARED {
             diff.push("attributes");
         }
+        let mut detail = String::new();
         if let (Some((want, info)), Some((now, _))) = (&s.sd, &sd) {
-            if sddl(now, *info) != sddl(want, *info) {
-                diff.push("permissions / owner");
+            for (part, name) in [(OWNER | GROUP, "owner / group"), (DACL, "permissions"), (SACL, "auditing entries")] {
+                if info & part != 0 && sddl(now, part) != sddl(want, part) {
+                    diff.push(name);
+                    if std::env::var_os("SMART_SYMLINK_VERBOSE").is_some() {
+                        detail += &format!(" [{name}: expected {} but found {}]", sddl(want, part), sddl(now, part));
+                    }
+                }
             }
         }
-        if diff.is_empty() { Ok(()) } else { Err(diff.join(", ")) }
+        if diff.is_empty() { Ok(()) } else { Err(diff.join(", ") + &detail) }
     }
 
     /// Copy of a self-relative SD whose AI flags are turned into "auto-inherit request" bits
     /// (control word at offset 2). None if the SD has no AI flags.
-    fn with_auto_inherit_request(sd: &[u8]) -> Option<Vec<u8>> {
+    fn with_auto_inherit_request(sd: &[u8], info: u32) -> Option<Vec<u8>> {
         const DACL_AI_REQ: u16 = 0x0100;
         const SACL_AI_REQ: u16 = 0x0200;
         const DACL_AI: u16 = 0x0400;
@@ -411,10 +423,10 @@ mod imp {
         }
         let control = u16::from_le_bytes([sd[2], sd[3]]);
         let mut add = 0;
-        if control & DACL_AI != 0 {
+        if info & DACL != 0 && control & DACL_AI != 0 {
             add |= DACL_AI_REQ;
         }
-        if control & SACL_AI != 0 {
+        if info & SACL != 0 && control & SACL_AI != 0 {
             add |= SACL_AI_REQ;
         }
         if add == 0 {

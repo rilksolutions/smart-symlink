@@ -173,3 +173,23 @@ mod imp {
         None
     }
 }
+
+/// `fs::read_link` that leaves the link's "accessed" date alone. On Linux, reading where a
+/// symlink points counts as an access and there is no flag to prevent it, so the date is put back.
+pub fn read_link(p: &Path) -> io::Result<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        use filetime::FileTime;
+        let before = std::fs::symlink_metadata(p)?;
+        let target = std::fs::read_link(p)?;
+        let (a, m) = (FileTime::from_last_access_time(&before), FileTime::from_last_modification_time(&before));
+        if std::fs::symlink_metadata(p).is_ok_and(|now| FileTime::from_last_access_time(&now) != a) {
+            let _ = filetime::set_symlink_file_times(p, a, m);
+        }
+        Ok(target)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::read_link(p)
+    }
+}

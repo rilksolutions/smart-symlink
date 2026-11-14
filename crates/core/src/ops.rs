@@ -325,7 +325,7 @@ pub enum UnlinkMode {
 
 /// Where a symlink / junction points (absolute, without verbatim prefixes).
 pub fn link_target(link: &Path) -> Option<PathBuf> {
-    let t = clean_path(&fs::read_link(link).ok()?);
+    let t = clean_path(&crate::fsx::read_link(link).ok()?);
     Some(if t.is_relative() { link.parent().map(|p| p.join(&t)).unwrap_or(t) } else { t })
 }
 
@@ -787,7 +787,7 @@ fn run_cmd(program: &str, paths: &[&str], args: &[&str]) -> Result<(), String> {
 
 /// Recreate a symlink/junction found inside a tree that is being copied.
 fn copy_link(src: &Path, dst: &Path) -> io::Result<()> {
-    let t = clean_path(&fs::read_link(src)?);
+    let t = clean_path(&crate::fsx::read_link(src)?);
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

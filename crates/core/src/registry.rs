@@ -196,7 +196,7 @@ pub fn status(l: &SavedLink) -> (LinkStatus, Option<Entry>) {
     } else if l.kind == LinkKind::Bind {
         if Path::new(&l.target).exists() { LinkStatus::Ok } else { LinkStatus::Broken }
     } else if md.file_type().is_symlink() {
-        let points = fs::read_link(lp).map(|t| display_path(&clean_path(&t))).unwrap_or_default();
+        let points = crate::fsx::read_link(lp).map(|t| display_path(&clean_path(&t))).unwrap_or_default();
         if !same_path(&points, &l.target) {
             LinkStatus::Changed
         } else if Path::new(&l.target).exists() {

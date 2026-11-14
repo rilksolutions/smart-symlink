@@ -18,6 +18,8 @@ fn setup() {
         unsafe {
             std::env::set_var("SMART_SYMLINK_CONFIG_DIR", cfg);
             std::env::set_var("SMART_SYMLINK_FORCE_COPY", "1");
+            // on a failure, show the exact security text that differs
+            std::env::set_var("SMART_SYMLINK_VERBOSE", "1");
         }
     });
 }
@@ -155,7 +157,9 @@ fn move_and_unlink_keep_every_detail_unix() {
     run_move(&src, &b, LinkKind::Symlink);
     let moved = b.join("home");
     assert_same(&moved, &before);
-    assert_eq!(fs::read_link(moved.join("rel-link")).unwrap(), Path::new("f1.txt"));
+    // read through the app's own reader: a plain readlink would change the link's "accessed" date on Linux
+    assert_eq!(smart_symlink_core::fsx::read_link(&moved.join("rel-link")).unwrap(), Path::new("f1.txt"));
+    assert_same(&moved, &before);
     assert_eq!(
         smart_symlink_core::fsinfo::file_id(&moved.join("f3.txt")),
         smart_symlink_core::fsinfo::file_id(&moved.join("sub/f3-link.txt"))
